@@ -1,5 +1,79 @@
 ---
 title: "combiningxmlfiles"
+author: "Ruth Williamson"
 format: html
+
+This was not extremely effective. The function Ai wrote was more effective, but this was good to practice learning about transforming the data into what I may need.
 ---
+```{r}
+#loading libraries
+library(xml2)
+library(tidyverse)
+
+```
+
+```{r}
+#loading pump 5 noon data mix 1 as a list using read xml2
+p5_12pm_mix1 <- as_list(read_xml("../practice_tdu_data/p5 12pm mix1.xml"))
+```
+
+```{r}
+#turning the list into a tibble and unnesting the results so they are their own variables
+p5_12pm_m1_df <- tibble::as_tibble(p5_12pm_mix1) |>
+  unnest_longer(Results)
+```
+
+Now we try a different method because what you see above just gets us a bunch of chracters and lists
+
+```{r}
+#load library
+library(XML)
+```
+
+```{r}
+# parse the xml file
+p5_12pm_mix2 <- xmlParse("../practice_tdu_data/p5 12pm mix2.xml")
+```
+
+```{r}
+# extract the root node
+root_node <- xmlRoot(p5_12pm_mix2)
+```
+
+```{r}
+# convert xml to dataframe 
+p5_12pm_m2_df <- xmlToDataFrame(nodes = getNodeSet(root_node, "//Compounds"))
+```
+
+Okay this was successful, but now all the types are characters...
+
+Trying agian, but using a different method (XML rather than xml2)
+
+```{r}
+#load library
+library(XML)
+```
+
+```{r}
+# parse the xml file
+p5_12pm_mix2 <- xmlParse("../practice_tdu_data/p5 12pm mix2.xml")
+```
+
+```{r}
+# extract the root node
+root_node <- xmlRoot(p5_12pm_mix2)
+```
+
+```{r}
+# convert xml to dataframe 
+p5_12pm_m2_df <- xmlToDataFrame(nodes = getNodeSet(root_node, "//Compounds"))
+
+# convert xml to tibble
+p5_12pm_m2_tb <- as_tibble(p5_12pm_m2_df)
+
+p5_12pm_m2_typ <- type_convert(p5_12pm_m2_tb) #assigns types based on the type convert function
+
+```
+
+
 

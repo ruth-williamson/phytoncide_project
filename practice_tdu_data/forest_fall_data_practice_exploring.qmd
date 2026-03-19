@@ -1,0 +1,195 @@
+---
+title: "forest_fall_data_practice_exploring"
+format: html
+---
+
+This is for me to practice playing with data from Katy Trail Fall 2023. For the sake of my sanity at the moment
+I will just be dealing with the 12pm data. 3 pumps were used, pump #3, pump #4, and pump #5. There was also one control tube that was not opened during the sampling. I have also included the three blanks that were at the beginning of the run to give a baseline of machine noise.
+
+This leaves us with 
+
+```{r}
+library(tidyverse)
+library(cowplot)
+theme_set(theme_cowplot())
+```
+
+
+```{r}
+#reading the data from M365_help_write_function.qmd
+
+blk_1_ff23 <- read.csv("../practice_tdu_data/combined_csv_ff23/blk_1_ff23")
+blk_2_ff23 <- read.csv("../practice_tdu_data/combined_csv_ff23/blk_2_ff23")
+blk_3_ff23 <- read.csv("../practice_tdu_data/combined_csv_ff23/blk_3_ff23")
+cntrl_12pm_ff23 <- read.csv("../practice_tdu_data/combined_csv_ff23/control_12pm_ff23")
+pmp_3_12pm_ff23 <- read.csv("../practice_tdu_data/combined_csv_ff23/p3_12pm_ff23")
+pmp_4_12pm_ff23 <- read.csv("../practice_tdu_data/combined_csv_ff23/p4_12pm_ff23")
+pmp_5_12pm_ff23 <- read.csv("../practice_tdu_data/combined_csv_ff23/p5_12pm_ff23")
+
+
+```
+
+```{r}
+#attempting to make new columns to better categorize and track the data
+#added the columns "location", "pump", "time", and "year". The blks and controls
+#don't have pumps so they are NA, and same for blk time and location.
+pmp_3_12pm_ff23_org <- pmp_3_12pm_ff23 |> 
+  mutate(location = "kt", pump_num = 3, time = "12pm", year = "2023")
+
+pmp_4_12pm_ff23_org <- pmp_4_12pm_ff23 |> 
+  mutate(location = "kt", pump_num = 4, time = "12pm", year = "2023")
+
+pmp_5_12pm_ff23_org <- pmp_5_12pm_ff23 |> 
+  mutate(location = "kt", pump_num = 5, time = "12pm", year = "2023")
+
+cntrl_12pm_ff23_org <- cntrl_12pm_ff23 |> 
+  mutate(location = "kt", pump_num = NA, time = "12pm", year = "2023")
+
+blk_1_ff23_org <- blk_1_ff23 |> 
+  mutate(location = NA, pump_num = NA, time = NA, year = "2023")
+
+blk_2_ff23_org <- blk_2_ff23 |> 
+  mutate(location = NA, pump_num = NA, time = NA, year = "2023")
+
+blk_3_ff23_org <- blk_3_ff23 |> 
+  mutate(location = NA, pump_num = NA, time = NA, year = "2023")
+
+```
+
+Combining these into one df
+```{r}
+ff_12pm_23 <- bind_rows(pmp_3_12pm_ff23_org, pmp_4_12pm_ff23_org, pmp_5_12pm_ff23_org)
+```
+
+
+Reading in the pump count info
+
+```{r}
+pump_count_ff23 <- read_csv("Tidy_Pump_Counts_ff23.csv") # read in file with pump counts
+```
+
+Adding calculations to this pump count
+
+```{r}
+pump_count_ff23 <- pump_count_ff23 |>
+  mutate(total_count = count_after-count_before) #count after minus count before to get total counts during sampling
+
+pump_count_ff23 <- pump_count_ff23 |>
+  mutate(total_ml = total_count*ml_count) #total ml collected
+
+pump_count_ff23 <- pump_count_ff23 |>
+  mutate(total_l = total_ml/1000) #total l collected
+
+pump_count_ff23 <- pump_count_ff23 |>
+  mutate(cubic_m = total_ml/1000000) #total cubic meters collected
+```
+
+Joining the pump info to the compound info
+```{r}
+ff_12_23_joined <- left_join(ff_12pm_23, pump_count_ff23, by=join_by(time, pump_num))
+```
+
+Corrected concentrations based on the pump volume (ng from gc/meters cubed)
+```{r}
+ff_12_23_corrected <- ff_12_23_joined |>
+  mutate(ng_cubic_m = Amount/cubic_m) #adding a new column with ng/cubic meter concentration
+```
+
+```{r}
+#let's try some basic visualization!
+
+ff_12pm_23 |> 
+  group_by(Peak_Name) |>
+  summarize(avg_conc = mean(Amount), std_conc = sd(Amount)) |>
+  print(n=35)
+
+```
+
+```{r}
+ff_12_23_corrected |>
+  ggplot(aes(x= Peak_Name, y= ng_cubic_m, color = Peak_Name)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_point(position = position_jitter(width = 0.3),
+             alpha = 0.5,
+             size = 1) +
+  theme( axis.text.x = element_text(
+    angle = 90
+  ))
+```
+
+```{r}
+#trying to log transform the data to spread it apart and show the relationships better
+ff_12_23_corrected <- ff_12_23_corrected |>
+  mutate(ng_cubic_m_log = log(ng_cubic_m))
+
+ff_12_23_corrected |>
+  ggplot(aes(x= Peak_Name, y= ng_cubic_m_log, color=Peak_Name)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_point(position = position_jitter(width = 0.3),
+             alpha = 0.5,
+             size = 1) +
+  theme( axis.text.x = element_text(
+    angle = 90
+  ))
+```
+
+```{r}
+ff_12_23_corrected |>
+  summarize(avg_conc = mean(ng_cubic_m)) #views the mean of the average phytoncide amount
+
+c_range <- ff_12_23_corrected |>
+  group_by(Peak_Name) |>
+  summarize(average_compound = mean(ng_cubic_m))
+
+in_range <- c_range |>
+  subset(average_compound<100) |>
+  subset(average_compound>0.5)
+#After averaging the ng_cubic_m for each compound then filtering against the top and bottom of the calibration curve, only 27 of them fall within the range. The others are extrapolation.
+
+out_range <- c_range |>
+  subset(average_compound>100 | average_compound<0.5)
+#these are the compounds beyond the range of calibration
+
+```
+
+```{r}
+#filtering just alpha pinene and p cymene
+
+ff_12_23_filtered <- ff_12_23_corrected  |>
+  filter(Peak_Name %in% c("p Cymene", "Alpha Pinene"))
+
+print(ff_12_23_filtered)
+
+ff_12_23_filtered |>
+  ggplot(aes(x= Peak_Name, y= ng_cubic_m, color = Peak_Name)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_point(position = position_jitter(width = 0.3),
+             alpha = 0.5,
+             size = 1)
+```
+
+
+
+Now we want to create a table for publication that has 
+- compound name
+- RT
+- Primary ion
+- Secondary ion
+- Tertiary ion
+- Line equation
+- R^2
+- LOD
+- LOQ
+
+I think I need to filter the data down a bit then export it so I can merge it to the table in the LOD/LOQ
+
+```{r}
+ion_info <- ff_12_23_corrected |>
+  select(Peak_Name, Expected_Retention_Time, Target_Ion, Qualifier1_Ion, Qualifier2_Ion )
+
+ion_info <- unique(ion_info) #dropping the duplicate columns
+
+ion_info <- ion_info |>
+  rename(name = Peak_Name)
+```
+

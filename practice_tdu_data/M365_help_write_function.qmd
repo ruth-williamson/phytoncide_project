@@ -3,3 +3,138 @@ title: "M365_help_write_function"
 format: html
 ---
 
+```{r}
+#loading packages
+library(xml2)
+library(dplyr)
+library(purrr)
+library(tibble)
+library(readr)
+library(stringr)
+```
+
+```{r}
+xml_compounds_to_tibble <- function(path,
+                                   record_xpath = ".//Compounds",
+                                   col_types = NULL,
+                                   add_source = TRUE) {
+  doc <- read_xml(path)
+
+  nodes <- xml_find_all(doc, record_xpath)
+
+  rows <- map(nodes, function(node) {
+    kids <- xml_children(node)
+    nms  <- xml_name(kids)
+    vals <- xml_text(kids)
+
+    # Normalize empty strings to NA
+    vals <- na_if(str_trim(vals), "")
+
+    as.list(setNames(vals, nms))
+  })
+
+  out <- bind_rows(rows) |> as_tibble()
+
+  # Convert types if provided (keeps unspecified columns as character)
+  if (!is.null(col_types)) {
+    out <- type_convert(out, col_types = col_types, na = c("", "NA"))
+  }
+
+  if (add_source) {
+    out <- mutate(out, source_file = basename(path), .before = 1)
+  }
+
+  out
+}
+```
+
+whats happening check
+```{r}
+path<- "p3 12pm mix1.xml"
+  doc <- read_xml(path)
+record_xpath <- ".//Compounds"
+  nodes <- xml_find_all(doc, record_xpath)
+
+  rows <- map(nodes, function(node) {
+    kids <- xml_children(node)
+    nms  <- xml_name(kids)
+    vals <- xml_text(kids)
+
+    # Normalize empty strings to NA
+    vals <- na_if(str_trim(vals), "")
+
+    as.list(setNames(vals, nms))
+  })
+
+  out <- bind_rows(rows) |> as_tibble()
+
+  # Convert types if provided (keeps unspecified columns as character)
+  if (!is.null(col_types)) {
+    out <- type_convert(out, col_types = col_types, na = c("", "NA"))
+  }
+
+  if (add_source) {
+    out <- mutate(out, source_file = basename(path), .before = 1)
+  }
+
+  out
+}
+```
+
+```{r}
+combine_four_xml <- function(paths,
+                             record_xpath = ".//Compounds",
+                             col_types = NULL,
+                             add_source = TRUE) {
+  stopifnot(length(paths) == 4)
+
+  map_dfr(
+    paths,
+    ~ xml_compounds_to_tibble(.x,
+                              record_xpath = record_xpath,
+                              col_types = col_types,
+                              add_source = add_source)
+  )
+}
+```
+
+```{r}
+compound_types <- cols(
+  Number                  = col_integer(),
+  Peak_Name               = col_character(),
+  Retention_Time          = col_double(),
+  Amount                  = col_double(),
+  Peak_Area               = col_double(),   # could be integer but safe as double
+  Units                   = col_character(),
+  Cal_Istd                = col_integer(),
+  QValue                  = col_integer(),
+  Expected_Retention_Time = col_double(),
+
+  Target_Ion              = col_double(),
+  Qualifier1_Ion          = col_double(),
+  Qualifier2_Ion          = col_double(),
+  Qualifier3_Ion          = col_double(),
+
+  Start_Integration        = col_double(),
+  End_Integration          = col_double()
+)
+```
+
+```{r}
+
+ff <-list.files("../practice_tdu_data/",pattern="xml")
+
+files <- c("../practice_tdu_data/blk 4/blk4 mix1.xml", "../practice_tdu_data/blk 4/blk4 mix2.xml", "../practice_tdu_data/blk 4/blk4 mix3.xml", "../practice_tdu_data/blk 4/blk4 mix4.xml")
+
+all_compounds <- combine_four_xml(
+  paths = files,
+  record_xpath = ".//Compounds",
+  col_types = compound_types,
+  add_source = TRUE
+)
+
+glimpse(all_compounds)
+
+write_csv(all_compounds, "blk_4_ff23")
+```
+

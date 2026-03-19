@@ -1,0 +1,225 @@
+---
+title: "lod_loq_calculation_practice"
+format: html
+---
+Example:
+Standard concentration: 10 ppm benzene
+Peak height: 5 pA
+Noise: 0.03 pA
+Detection threshold: 3× noise
+
+set up relationship
+10ppm <- 5pA
+LOD <- 3 X noise
+
+General Formula:
+LOD = (Factor × Noise × Concentration) / Peak Height
+
+Applying the numbers:
+LOD = (3 × 0.03 pA × 10 ppm) / 5 pA
+LOD = 0.18 ppm
+
+So any benzene peak above 0.18 ppm is considered detectable. Anything lower is unreliable and usually treated as “not detected.”
+
+LOQ:
+LOQ = 3.3 x LOD
+
+
+
+___________________________
+signal = peak height
+noise = in the TIC what is the nearby background noise
+concentration = in ppm the concentration looked at
+injection_ul = Injection volume (usually 1uL)
+line equation: response = slope * amount
+
+```{r}
+#loading libraries
+
+library(tidyverse)
+library(readxl)
+library(gtable)
+library(dplyr)
+library(ggpmisc)
+```
+
+Reading in the Data
+```{r}
+#reading in table with all the cal curve info and signal to noise
+
+cal_info <- read_xlsx("compound_summary_table_info_2024.xlsx")
+
+glimpse(cal_info)
+
+knitr::kable(cal_info)
+
+```
+
+Adding Columns for LOD and LOQ
+```{r}
+#LOD = (Factor × Noise × Concentration) / Peak Height
+
+cal_info <- cal_info |>
+  mutate(lod = (3*concentration)/(signal/noise),
+         loq = (10*concentration)/(signal/noise))
+
+glimpse(cal_info)
+```
+
+Adding Line Equation Row
+```{r}
+cal_info <- cal_info |>
+  mutate(line = paste("y =", line_slope, "x"))
+
+glimpse(cal_info)
+```
+
+
+Merging data frames and selecting/renaming columns
+```{r}
+ion_table_dat <- left_join(cal_info, ion_info)
+
+ion_table_dat <- ion_table_dat |>
+  select(name, Expected_Retention_Time, Target_Ion, Qualifier1_Ion, Qualifier2_Ion,line, R2_cal_curve, lod, loq) |>
+  rename("Compound" = name, "RT" = Expected_Retention_Time, "Target Ion" = Target_Ion, "Q1 Ion" = Qualifier1_Ion, "Q2 Ion" = Qualifier2_Ion, "line" = line, "R^2" = R2_cal_curve, "LOD" = lod, "LOQ" = loq)
+
+ion_table_dat <- ion_table_dat |>
+  arrange(RT) #sorting by increasing RT 
+
+glimpse(ion_table_dat)
+```
+
+
+Creating Table
+```{r}
+library(knitr)
+library(kableExtra)
+
+```
+
+```{r}
+
+ion_table <- kable(ion_table_dat, caption = "Ion Info", digits = 3) %>%
+  kable_styling(full_width = FALSE, position = "center", 
+                latex_options = c("striped", "hold_position"))
+
+ion_table
+```
+
+Finding LOD min and max
+```{r}
+#ion_table_dat |>
+ #summarise(LOD_min = min(ion_table_dat$LOD),
+  #          LOD_max = max(ion_table_dat$LOD),
+   #         LOQ_min = min(ion_table_dat$LOQ),
+    #        LOQ_max = max(ion_table_dat$LOQ))
+```
+
+```{r}
+#used AI to help write this based on above code
+ion_table_dat |>
+  summarise(
+    LOD_min       = min(LOD, na.rm = TRUE),
+    LOD_min_names = str_c(Compound[LOD == LOD_min], collapse = ", "),
+    LOD_max       = max(LOD, na.rm = TRUE),
+    LOD_max_names = str_c(Compound[LOD == LOD_max], collapse = ", "),
+    LOQ_min       = min(LOQ, na.rm = TRUE),
+    LOQ_min_names = str_c(Compound[LOQ == LOQ_min], collapse = ", "),
+    LOQ_max       = max(LOQ, na.rm = TRUE),
+    LOQ_max_names = str_c(Compound[LOQ == LOQ_max], collapse = ", ")
+  )
+
+```
+
+```{r}
+#LOD under 1pmm
+
+lod_under1 <- filter(ion_table_dat, ion_table_dat$LOD<1)
+
+lod_over1 <-filter(ion_table_dat, ion_table_dat$LOD>1)
+```
+
+
+```{r}
+
+ion_table_dat |>
+  summarise(mean_R2 = mean(ion_table_dat$`R^2`),
+            min_R2 = min(`R^2`),
+            max_R2 = max(`R^2`))
+
+
+```
+
+Is slope correlated with LOD?
+```{r}
+cal_info |>
+  ggplot(aes(x= lod, y= line_slope)) +
+  geom_point() +
+  scale_x_reverse()
+
+#No...it really doesn't
+```
+
+```{r}
+#creating calibration curve plot of Camphene
+
+camphene_conc <- c(0.5, 1, 10, 25, 50, 75, 100) #in ppm
+camphene_resp <- c(550, 752, 23740, 62877, 117078, 196228, 248727) #peak area
+
+camphene_cal_curv <- data.frame(
+  concentration = camphene_conc,
+  response = camphene_resp
+)
+
+
+camphene_cal_curv |>
+ggplot(aes(x=concentration, y= response)
+       ) +
+  stat_poly_eq(formula = y~x+0,
+               parse = TRUE,
+               rr.digits = 4
+               ) +
+  stat_poly_line(formula = y~x+0,
+                 se =FALSE,
+                 color = "black"
+                 )+
+  geom_point(size = 4,
+             alpha = .7
+             ) +
+  labs(title = "Camphene Calibration Curve",
+       x = "Concentration (ppm)",
+       y = "Peak Area")
+  
+```
+
+```{r}
+
+camphene_conc <- c(0.5, 1, 10, 25, 50, 75, 100) #in ppm
+camphene_resp <- c(550, 752, 23740, 62877, 117078, 196228, 248727) #peak area
+
+camphene_cal_curv <- data.frame(
+  concentration = camphene_conc,
+  response = camphene_resp
+)
+
+
+camphene_cal_curv |>
+ggplot(aes(x=concentration, y= response)
+       ) +
+  stat_poly_eq(formula = y~x+0,
+               parse = TRUE,
+               rr.digits = 4
+               ) +
+  stat_poly_line(formula = y~x+0,
+                 se =FALSE,
+                 color = "black"
+                 )+
+  geom_point(size = 4,
+             alpha = .7
+             ) +
+  labs(title = "Camphene Calibration Curve",
+       x = "Concentration (ppm)",
+       y = "Peak Area")
+  
+```
+
