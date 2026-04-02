@@ -34,13 +34,13 @@ pmp_5_12pm_ff23 <- read.csv("../practice_tdu_data/combined_csv_ff23/p5_12pm_ff23
 #added the columns "location", "pump", "time", and "year". The blks and controls
 #don't have pumps so they are NA, and same for blk time and location.
 pmp_3_12pm_ff23_org <- pmp_3_12pm_ff23 |> 
-  mutate(location = "kt", pump_num = 3, time = "12pm", year = "2023")
+  mutate(location = "kt", pump_num = '3', time = "12pm", year = "2023")
 
 pmp_4_12pm_ff23_org <- pmp_4_12pm_ff23 |> 
-  mutate(location = "kt", pump_num = 4, time = "12pm", year = "2023")
+  mutate(location = "kt", pump_num = '4', time = "12pm", year = "2023")
 
 pmp_5_12pm_ff23_org <- pmp_5_12pm_ff23 |> 
-  mutate(location = "kt", pump_num = 5, time = "12pm", year = "2023")
+  mutate(location = "kt", pump_num = '5', time = "12pm", year = "2023")
 
 cntrl_12pm_ff23_org <- cntrl_12pm_ff23 |> 
   mutate(location = "kt", pump_num = NA, time = "12pm", year = "2023")
@@ -66,6 +66,12 @@ Reading in the pump count info
 
 ```{r}
 pump_count_ff23 <- read_csv("Tidy_Pump_Counts_ff23.csv") # read in file with pump counts
+
+pump_count_ff23 <- pump_count_ff23 |>
+  mutate(pump_num = as.character(pump_num)) #changing pump number to character
+  
+
+glimpse(pump_count_ff23)
 ```
 
 Adding calculations to this pump count
@@ -96,16 +102,7 @@ ff_12_23_corrected <- ff_12_23_joined |>
 ```
 
 ```{r}
-#let's try some basic visualization!
-
-ff_12pm_23 |> 
-  group_by(Peak_Name) |>
-  summarize(avg_conc = mean(Amount), std_conc = sd(Amount)) |>
-  print(n=35)
-
-```
-
-```{r}
+#basic box plot of the points
 ff_12_23_corrected |>
   ggplot(aes(x= Peak_Name, y= ng_cubic_m, color = Peak_Name)) +
   geom_boxplot(outlier.shape = NA) +
@@ -117,20 +114,87 @@ ff_12_23_corrected |>
   ))
 ```
 
-```{r}
-#trying to log transform the data to spread it apart and show the relationships better
-ff_12_23_corrected <- ff_12_23_corrected |>
-  mutate(ng_cubic_m_log = log(ng_cubic_m))
+Exploration of data!
 
+```{r}
+#is it normally distributed?
+
+normality_check <- ff_12_23_corrected |>
+  ggplot(aes(ng_cubic_m)) +
+  geom_histogram()
+  
+normality_check_log <- ff_12_23_corrected |>
+  ggplot(aes(ng_cubic_m_log10)) +
+  geom_histogram() +
+ 
+
+```
+
+Data doesn't appear to be normally distributed without log transformation
+
+```{r}
 ff_12_23_corrected |>
-  ggplot(aes(x= Peak_Name, y= ng_cubic_m_log, color=Peak_Name)) +
-  geom_boxplot(outlier.shape = NA) +
+  group_by(pump_num) |>
+  ggplot(aes(x= Peak_Name, y= ng_cubic_m_log10, color = pump_num)) +
   geom_point(position = position_jitter(width = 0.3),
              alpha = 0.5,
-             size = 1) +
+             size = 3) +
   theme( axis.text.x = element_text(
     angle = 90
   ))
+```
+
+```{r}
+ff_12_23_corrected |>
+  group_by(source_file) |>
+  ggplot(aes(x= Peak_Name, y= ng_cubic_m_log10, color = source_file)) +
+  geom_point(position = position_jitter(width = 0.3),
+             alpha = 0.5,
+             size = 3) +
+  theme( axis.text.x = element_text(
+    angle = 90
+  ))
+```
+
+```{r}
+#trying to log transform the data to spread it apart and show the relationships better
+ff_12_23_corrected <- ff_12_23_corrected |>
+  mutate(ng_cubic_m_log10 = log10(ng_cubic_m))
+         
+ff_12_23_corrected |>
+  ggplot(aes(x= Peak_Name, y= ng_cubic_m_log10)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_point(position = position_jitter(width = 0.3),
+             alpha = .7,
+             size = 1,
+             color = "red"
+             ) +
+  theme( axis.text.x = element_text(
+    angle = 45, size = 10, hjust = 1
+  )) +
+  theme(legend.position = "none") +
+  labs(title = "Forest Fall 12pm 2023", x = "Compound Name", y = "Concentration (ng/m^3) log10")
+```
+
+```{r}
+#Creating a table with the compound, it's exact mean concentration +_ the std
+
+conc_info <- ff_12_23_corrected |>
+  group_by(Peak_Name) |>
+  summarise(mean = mean(ng_cubic_m),
+            `+/- sd` = sd(ng_cubic_m)) |>
+  arrange(desc(mean))
+
+
+conc_table <- kable(conc_info, caption = "Compound Quantification", digits = 3) %>%
+  kable_styling(full_width = FALSE, position = "center", 
+                latex_options = c("striped", "hold_position"))
+
+conc_table
+
+conc_info |>
+  summarise(avg_sd = mean(`+/- sd`),
+            avg_m = mean(mean))
 ```
 
 ```{r}
