@@ -1,12 +1,9 @@
 ---
-title: "many_xmls_to_tibble"
+title: "Thermal_Desorption_XML_to_CSV"
 format: html
 ---
 
-This was written with the help of Microsoft CoPilot using the following prompts
-"Using the code below I can combine 4 xmls into one tibble, however I would like to combine many xmls into one big tibble. The xml names and their files help identify where they came from and this is important for keeping track of where the data is from. 
-
-Modify this code so I can put in file named "data" and there are 6 files with names like "phytoncide_collection_como_fall_2023" and within each of those 6 files there are 16 files that have names such as "p5_1800_forest_fall_2023", "blk_4_forest_fall_2023", "control_1800_forest_fall_2023", etc. and within each of the 16 files are the 4 xml files labeled like "p3_1800_mix1", "p3_1800_mix2", etc. The code should be able to take these xml files and convert them into a tibble and add identifcation keys based on the file names they come from such as "forest", "spring", "2023", "p3", "control", "blk". The code should also be transferrable so it can handle having different numbers of files added if we ever change the sampling technique."
+This was written with the help of Microsoft CoPilot, the code was comprehended and edited by me, Ruth Williamson, and I take full responsibility for the use and product.
 
 insert libraries
 --------------------------------------------
@@ -66,172 +63,6 @@ extract_metadata <- function(path) {
 
   path_parts <- str_split(path, .Platform$file.sep)[[1]]
 
-  # folder levels
-  top_level  <- path_parts[length(path_parts) - 3]  # e.g. phytoncide_collection_como_fall_2023
-  location   <- path_parts[length(path_parts) - 2]  # e.g. p5_1800_forest_fall_2023
-  xml_file   <- tools::file_path_sans_ext(basename(path))
-
-  tibble(
-    collection = top_level,
-
-    # tokens from intermediate folder
-    pump     = str_extract(location, "p\\d+"),
-    treatment  = case_when(
-      str_detect(location, "control") ~ "control",
-      str_detect(location, "blk")     ~ "blk",
-      TRUE ~ NA_character_
-    ),
-    environment = str_extract(location, "forest|field|mix"),
-    season      = str_extract(location, "spring|summer|fall|winter"),
-    year        = str_extract(location, "\\d{4}"),
-
-    # tokens from xml file
-    mix         = str_extract(xml_file, "mix\\d+"),
-    replicate   = str_extract(xml_file, "rep\\d+|mix\\d+")
-  )
-}
-```
-
-
-```{r}
-extract_metadata2 <- function(path) {
-
-  path_parts <- str_split(path, .Platform$file.sep)[[1]]
-
-  project_dir <- path_parts[length(path_parts) - 3]
-  sample_dir  <- path_parts[length(path_parts) - 2]
-
-  xml_name <- tools::file_path_sans_ext(basename(path))
-
-  # infer sample type
-  sample_type <- case_when(
-    str_detect(sample_dir, "^p\\d+")    ~ "sample",
-    str_detect(sample_dir, "^blk")      ~ "blk",
-    str_detect(sample_dir, "^control") ~ "control",
-    TRUE ~ NA_character_
-  )
-
-  tibble(
-    project = project_dir,
-
-    sample_type = sample_type,
-
-    pump = if_else(
-      sample_type == "sample",
-      str_extract(sample_dir, "p\\d+"),
-      NA_character_
-    ),
-
-    time = str_extract(sample_dir, "(?<=_)\\d{3,4}(?=_)|(?<=_)\\d{3,4}$"),
-
-    location = str_extract(sample_dir, "como|forest|field"),
-
-    season = str_extract(sample_dir, "spring|summer|fall|winter"),
-
-    year = str_extract(sample_dir, "\\d{4}"),
-
-    mix = str_extract(xml_name, "mix\\d+"),
-    
-    
-
-
-
-
-```
-
-Testing what the heck this is doing so I can parce it correctly
-```{r}
-
-extract_metadata3 <- function(path) {
-  
-path_parts <- str_split(path, .Platform$file.sep)[[1]]
-
-file_dir <- path_parts[length(path_parts) - 3]
-project_dir  <- path_parts[length(path_parts) - 2]
-sample_dir <- path_parts[length(path_parts)- 1]
-xml_name <- tools::file_path_sans_ext(basename(path))
-
-  # infer sample type
-  sample_type <- case_when(
-    str_detect(sample_dir, "^p\\d+")    ~ "sample",
-    str_detect(sample_dir, "^blk")      ~ "blk",
-    str_detect(sample_dir, "^control") ~ "control",
-    TRUE ~ NA_character_
-  )
-
-  tibble(
-    project = project_dir,
-
-    type = sample_type,
-
-    pump = if_else(
-      sample_type == "sample",
-      str_extract(sample_dir, "p\\d+"),
-      NA_character_),
-
-    time = if_else(
-      sample_type == "sample",
-      str_extract(sample_dir, "(?<=_)\\d{3,4}(?=_)|(?<=_)\\d{3,4}$"),
-      NA_character_),
-
-    location = str_extract(project_dir, "como|forest|field"),
-
-    season = str_extract(project_dir, "spring|summer|fall|winter"),
-
-    year = str_extract(project_dir, "\\d{4}"),
-
-    mix = str_extract(xml_name, "mix\\d+"),
-    
-    sample_ID <- case_when(
-      
-    sample_type == "sample" ~ str_c(
-      "sample",
-      pump,
-      time,
-      location,
-      season,
-      year,
-      mix,
-      sep = "_",
-      na.rm = TRUE
-    ),
-
-    # Controls (time + year usually meaningful)
-    sample_type == "control" ~ str_c(
-      "control",
-      time,
-      mix,
-      location,
-      season,
-      year,
-      sep = "_",
-      na.rm = TRUE
-    ),
-
-    # Blanks (often only numeric batch + mix)
-    sample_type == "blk" ~ str_c(
-      "blk",
-      time,
-      mix,
-      location,
-      season,
-      year,
-      sep = "_",
-      na.rm = TRUE
-    ),
-
-    TRUE ~ NA_character_
-  )
-
-    )
-}
-```
-
-```{r}
-extract_metadata4 <- function(path) {
-
-  path_parts <- str_split(path, .Platform$file.sep)[[1]]
-
   file_dir    <- path_parts[length(path_parts) - 3]
   project_dir <- path_parts[length(path_parts) - 2]
   sample_dir  <- path_parts[length(path_parts) - 1]
@@ -279,7 +110,7 @@ extract_metadata4 <- function(path) {
     ),
 
     sample_type == "blk" ~ str_c(
-      "blk", location, season, year, mix,
+      blk_num, location, season, year, mix,
       sep = "_"
     ),
     TRUE ~ NA_character_)
@@ -325,10 +156,10 @@ read_all_xmls <- function(root_dir,
       add_source = TRUE
     )
 
-    meta <- extract_metadata4(path)
+    meta <- extract_metadata(path)
 
     bind_cols(
-      meta %>% slice(rep(1, nrow(compounds))),
+      meta |> slice(rep(1, nrow(compounds))),
       compounds
     )
   })
@@ -339,6 +170,8 @@ read_all_xmls <- function(root_dir,
 column type assignment
 
 ```{r}
+#can edit this to change column types (may want to change time to numeric?)
+
 compound_types <- cols(
   Number                  = col_integer(),
   Peak_Name               = col_character(),
@@ -364,12 +197,40 @@ compound_types <- cols(
 put file here
 
 ```{r}
-foresttest <- read_all_xmls(
-  root_dir = "data test/",
+foresttest <- read_all_xmls( #put the name of your data table here
+  root_dir = "phytoncide_collection_data/", #put your data file you want to read in here
   col_types = compound_types
 )
 
 glimpse(foresttest)
 #write_csv(all_compounds, "all_phytoncide_compounds.csv")
+```
+
+-------------------------------------------
+Sanity Checking that the data made it in correctly
+
+```{r}
+#check that rows match:
+expected_rows <- (16*35)*3+(17*35)*3
+
+if (nrow(foresttest) != expected_rows) {
+  warning("Row count does not match expected value!")
+}
+
+#checking the compound counts per mix. Should be 10 for mixes 1-3 and 5 for mix 4.
+compound_counts <- foresttest |>
+  count(sample_ID, name = "n_compounds")
+
+compound_counts
+
+#can run unique on rows to make sure there aren't any typos or strange errors.
+unique(foresttest$location)
+
+unique(foresttest$type)
+
+unique(foresttest$year)
+
+unique(foresttest$mix)
+
 ```
 
