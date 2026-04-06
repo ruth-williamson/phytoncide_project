@@ -14,6 +14,7 @@ library(purrr)
 library(tibble)
 library(readr)
 library(stringr)
+library(janitor)
 ```
 
 
@@ -197,13 +198,17 @@ compound_types <- cols(
 put file here
 
 ```{r}
-foresttest <- read_all_xmls( #put the name of your data table here
+phytoncide_dat <- read_all_xmls( #put the name of your data table here
   root_dir = "phytoncide_collection_data/", #put your data file you want to read in here
-  col_types = compound_types
-)
+  col_types = compound_types) |> 
+  clean_names() |> #cleans column names
+  mutate(peak_name = peak_name |>
+           str_trim () |>
+           str_to_lower() |>
+           str_replace_all(" ", "_")) #cleans the compound names
 
-glimpse(foresttest)
-#write_csv(all_compounds, "all_phytoncide_compounds.csv")
+glimpse(phytoncide_dat)
+#write_csv(phytoncide_dat, "phytoncide_dat") #uncomment this line when you are ready to get your csv
 ```
 
 -------------------------------------------
@@ -234,3 +239,7 @@ unique(foresttest$mix)
 
 ```
 
+It is also good practice to randomly check three or more lines of the tibble
+with their original xml files to make sure things are matching up correctly
+
+Once you are happy here, go ahead and uncomment the write_csv line and have fun with your data set!!!
