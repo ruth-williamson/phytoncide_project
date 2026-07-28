@@ -72,9 +72,9 @@ extract_metadata <- function(path) {
 
   # ---- sample type ----
   sample_type <- case_when(
-    str_detect(sample_dir, "^p\\d+")    ~ "sample",
-    str_detect(sample_dir, "^blk")      ~ "blk",
-    str_detect(sample_dir, "^control") ~ "control",
+    str_detect(sample_dir, "^p\\d+")    ~ "sample", #Looks for samples if they have pump info
+    str_detect(sample_dir, "^blk")      ~ "blk", #labels blanks by looking for something with "blk" in the name
+    str_detect(sample_dir, "^control") ~ "control", #looks for controls if they are labeled "control"
     TRUE ~ NA_character_
   )
 
@@ -90,7 +90,7 @@ extract_metadata <- function(path) {
       str_extract(sample_dir, "(?<=_)\\d{3,4}(?=_)|(?<=_)\\d{3,4}$"),
       NA_character_
       )
-   
+#edit these for your own specific variables you want to keep track of   
   location <- str_extract(project_dir, "como|forest|field")
   season   <- str_extract(project_dir, "spring|summer|fall|winter")
   year     <- str_extract(project_dir, "\\d{4}")
@@ -199,7 +199,7 @@ put file here
 
 ```{r}
 phytoncide_dat <- read_all_xmls( #put the name of your data table here
-  root_dir = "phytoncide_collection_data/", #put your data file you want to read in here
+  root_dir = "phytoncide_collection_data_raw_xmls/", #put your data file you want to read in here
   col_types = compound_types) |> 
   clean_names() |> #cleans column names
   mutate(peak_name = peak_name |>
@@ -208,6 +208,11 @@ phytoncide_dat <- read_all_xmls( #put the name of your data table here
            str_replace_all(" ", "_")) #cleans the compound names
 
 glimpse(phytoncide_dat)
+```
+
+------------------------------------------
+Write ya CSV out!
+```{r}
 #write_csv(phytoncide_dat, "phytoncide_dat") #uncomment this line when you are ready to get your csv
 ```
 

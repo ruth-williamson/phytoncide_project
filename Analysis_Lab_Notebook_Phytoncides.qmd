@@ -3,3 +3,23 @@ title: "Analysis_Lab_Notebook_Phytoncides"
 format: html
 ---
 
+Started: 4/6/2026
+
+Background:
+I am starting this lab notebook to keep track of what I do in terms of anlaysis
+and data organization for the forest/como phytoncide project.
+
+Entries:
+
+4/6/2026------------
+Prior to the notebook I have been working with Dr. King to write an R script
+that will take all the xml files we create with the TDU computer and convert
+them into one big file that can then be handled in R and analyzed.
+
+That code is currently working and is in "many_xmls_to_tibble.qmd"
+
+Today I am sanity checking the file to make sure it is correct, I checked three
+random rows from the file and double checked it with the original xml file.
+
+I also added code to the first read in of the xml files to clean the column
+names and the compound names.

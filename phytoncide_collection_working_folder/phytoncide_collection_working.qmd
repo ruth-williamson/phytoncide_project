@@ -1,0 +1,859 @@
+---
+title: "phytoncide_collection_working"
+format: html
+---
+
+The goal for this document is to:
+- get the file loaded in
+- load in tidy pump data
+- use that pump data to ge the corrected concentration readings
+- once the corrected concentration info is in, check pump performance
+    - do this through general visualization faceting and coloring
+    - then start doing relationship plots to see if certain compounds and pumps
+    the reason some of the readings are so high and variable.
+    
+# Load in ya libraries :)
+```{r}
+library(tidyverse)
+library(cowplot)
+library(readxl)
+theme_set(theme_cowplot())
+library(factoextra)
+library(wesanderson)
+library(knitr)
+library(gt)
+library(openxlsx)
+pal <- wes_palette(name = "Zissou1")
+```
+
+# Read in ya data!
+```{r}
+phyto_dat <- read.csv("phytoncide_dat")
+
+phyto_dat$time <- factor(phyto_dat$time, labels = c("8am", "12pm", "6pm"), levels = c("800", "1200", "1800")) #changing time to factor 
+
+glimpse(phyto_dat)
+
+pump_dat <- read_xlsx("tidy_pump_counts.xlsx")
+
+pump_dat$time <- factor(pump_dat$time, labels = c("8am", "12pm", "6pm"), levels = c("800", "1200", "1800"))
+
+glimpse(pump_dat)
+```
+
+# Performing calculations on the pump data
+```{r}
+pump_dat <- pump_dat |>
+  mutate(total_count = count_after-count_before, #pump count during sampling
+         total_ml = total_count*ml_count, #ml collected
+         total_l = total_ml/1000, #total liters collected
+         cubic_m = total_ml/1000000) #total cubic meters collected
+
+glimpse(pump_dat)
+```
+
+# Slap those files together
+```{r}
+dat_joined <- left_join(phyto_dat, pump_dat, by=join_by(time, pump, year, season, location)) 
+#joined on the shared columns
+
+glimpse(dat_joined)
+```
+
+# Calculate the corrected concentrations based on the pump data and added ID column for PCA analysis and ug/m^3
+```{r}
+dat <- dat_joined |>
+  mutate(conc_ngcm = amount/cubic_m,
+         conc_ugcm = conc_ngcm/1000,
+         pca_id = case_when(
+
+    type == "sample" ~ str_c(
+      "sample", pump, time, location, season, year,
+      sep = "_"
+    ),
+
+    type == "control" ~ str_c(
+      "control", time, location, season, year,
+      sep = "_"
+    ),
+
+    type == "blk" ~ str_c(
+      blk_num, location, season, year,
+      sep = "_"
+    ),
+    TRUE ~ NA_character_))
+```
+```{r}
+datcheck <- dat |>
+  filter_out(type == "control") |>
+  filter_out(type == "blk") |>
+  group_by(peak_name) |>
+  summarise(n = n())
+```
+
+## Okay now we should be good to go, and we can start visualization now!
+
+giant scatter plot of all the data points faceted and colored for different features
+```{r}
+dp <- dat |>
+  ggplot(aes(x = season, y = conc_ngcm, color = pump)) +
+  geom_point(position = position_jitter(width = 0.3),
+             alpha = 0.5)
+
+dp
+```
+
+histogram of data
+```{r}
+dphis <- dat |>
+  ggplot(aes(x = conc_ngcm)) +
+  geom_histogram(bins = 30)
+
+dphis
+```
+
+histogram faceting
+```{r}
+dphisf1 <- dat |>
+  ggplot(aes(x = conc_ngcm)) +
+  geom_histogram(bins = 30) +
+  facet_wrap(~season)
+
+dphisf1
+```
+
+density plot of data
+```{r}
+dpden <- dat |>
+  ggplot(aes(x = conc_ngcm)) +
+  geom_density()
+
+dpden
+```
+
+scatterplot with location and pump
+```{r}
+fc <- dat |>
+  ggplot(aes(x = location, y = conc_ngcm, color = pump)) +
+  geom_point(position = position_jitter(width = 0.3),
+             alpha = 0.5)
+fc
+```
+
+scatterplot looking at pumps
+```{r}
+fc2 <- dat |>
+  ggplot(aes(x = pump, y = conc_ngcm, color = location)) +
+  geom_point(position = position_jitter(width = 0.3),
+             alpha = 0.5)
+fc2
+```
+
+scatterplot looking at compounds
+```{r}
+fc3 <- dat |>
+  ggplot(aes(x = peak_name, y = conc_ngcm, color = pump)) +
+  geom_point(position = position_jitter(width = 0.3),
+             alpha = 0.5,
+             size = 1) +
+  theme( axis.text.x = element_text(
+    angle = 90))
+fc3
+```
+
+scatterplot looking at time
+```{r}
+fc4 <- dat |>
+  ggplot(aes(x = time, y = conc_ngcm, color = location)) +
+  geom_point(position = position_jitter(width = 0.5),
+             alpha = 0.5,
+             size = 3) +
+  theme( axis.text.x = element_text(
+    angle = 90))
+fc4
+```
+
+What do we see from this?
+
+- The data is highly right skewed (plots dpden and dphis)
+- data points from the city on beta-phellandrene are a major cause of this skew (plot fc3)
+- It appears that the pumps have a similar spread of data, so the pumps are 
+all functioning the equally (plot fc2)
+- you can't really see any major differences between the season in this form (fc)
+
+
+Where do we go from here?
+
+- log transformation
+- recheck skew and spread
+
+# Log Transformation Time!!!
+
+```{r}
+dat <- dat |>
+  mutate(conc_nglog = log10(conc_ngcm),
+         conc_uglog = log10(conc_ugcm))
+```
+
+Checking the skew again...
+```{r}
+dphis2 <- dat |>
+  ggplot(aes(x = conc_uglog)) +
+  geom_histogram(bins = 30)
+
+dphis2
+```
+
+```{r}
+dpden2 <- dat |>
+  ggplot(aes(x = conc_uglog, fill = location)) +
+  geom_density()
+
+dpden2
+```
+
+```{r}
+dphisf2 <- dat |>
+  ggplot(aes(x = conc_nglog)) +
+  geom_histogram(bins = 30) +
+  facet_wrap(~season + location)
+
+dphisf2
+```
+
+Let's see those plots again but this time they are readable >:)
+
+scatterplot with location and pump
+```{r}
+fcl <- dat |>
+  ggplot(aes(x = location, y = conc_nglog, color = pump)) +
+  geom_point(position = position_jitter(width = 0.3),
+             alpha = 0.5)
+fcl
+```
+
+scatterplot looking at pumps
+```{r}
+fc2l <- dat |>
+  ggplot(aes(x = pump, y = conc_nglog, color = location)) +
+  geom_point(position = position_jitter(width = 0.3),
+             alpha = 0.5)
+fc2l
+```
+
+scatterplot looking at compounds
+```{r}
+fc3l <- dat |>
+  ggplot(aes(x = peak_name, y = conc_nglog, color = pump)) +
+  geom_point(position = position_jitter(width = 0.3),
+             alpha = 0.5,
+             size = 1) +
+  theme( axis.text.x = element_text(
+    angle = 90))
+fc3l
+```
+
+scatterplot looking at time
+```{r}
+fc4l <- dat |>
+  ggplot(aes(x = time, y = conc_nglog, color = location)) +
+  geom_point(position = position_jitter(width = 0.3),
+             alpha = 0.5,
+             size = 3) +
+  facet_wrap(~season) +
+  theme( axis.text.x = element_text(
+    angle = 90))
+fc4l
+```
+
+Filtering some data out to look at only
+```{r}
+gp <- dat |>
+  filter(type!="blk" & type!="control") |> #filtering out control and blanks
+  ggplot(aes(x = season, y = conc_nglog)) +
+  geom_point(position = position_jitter(width = 0.3),
+             alpha = 0.5,
+             size = 1)
+gp
+
+
+```
+
+
+# Average Pumps no transformation
+```{r}
+dat_mean <- dat |>
+  filter(type!="blk" & type!="control") |>
+  group_by(location, season, time, peak_name) |>
+  summarise(mean = mean(conc_ngcm), sd = sd(conc_ngcm))
+```
+
+histogram of this is still skewed
+```{r}
+mhis <- dat_mean |>
+  ggplot(aes(x = mean)) +
+  geom_histogram(bins = 30)
+
+mhis
+```
+
+# Log Transformation of Averaged Pump info
+```{r}
+dat_mean <- dat_mean |>
+  mutate(mean_log = log10(mean))
+```
+
+```{r}
+mhis2 <- dat_mean |>
+  ggplot(aes(x = mean_log)) +
+  geom_histogram(bins = 30)
+
+mhis2
+```
+
+visualization of this
+```{r}
+mfc <- dat_mean |>
+  ggplot(aes(x = location, y = mean_log, color = time)) +
+  geom_point(position = position_jitter(width = 0.3),
+             alpha = 0.5,
+             size = 3) +
+  facet_wrap(~season) +
+  theme( axis.text.x = element_text(
+    angle = 90))
+mfc
+```
+
+# Selecting then visualizing
+```{r}
+#forest spring selection
+fsp <- dat |>
+  filter(type == "sample" & location == "forest" & season == "spring" & mix == "mix1")
+
+fsp |>
+  ggplot(aes(x = peak_name, y = conc_nglog, color = peak_name)) +
+  geom_boxplot() +
+  geom_point(position = position_jitter(width = 0.3),
+             alpha = 0.5,
+             size = 2) + 
+  facet_wrap(~time) +
+  theme( axis.text.x = element_text(
+    angle = 90)) +
+  labs(title = "Forest Spring Mix 1")
+```
+
+Interaction Plot of Forest Spring
+```{r}
+fsp |>
+  ggplot(aes(x = time, y = conc_nglog, group = peak_name, color = peak_name )) +
+   geom_point(position = position_jitter(width = 0.1), size = 3, alpha = 0.5) +
+  stat_summary(fun = mean, geom = "point", size = 3) +
+  stat_summary(fun = mean, geom = "line", linewidth = 1.5)
+```
+
+# Selecting the compounds that were significant from metaboanalyst
+```{r}
+
+top5 <- dat |>
+  filter(type == "sample" & peak_name %in% c("limonene", "ocimene", "alpha_pinene", "beta_phellandrene", "sabinene"))
+```
+
+```{r}
+top5 |>  
+  ggplot(aes(x = location, y = conc_nglog, color = peak_name)) +
+  geom_point(position = position_jitter(width = 0.3),
+             alpha = 0.5,
+             size = 3) +
+  facet_wrap(~season) +
+  theme( axis.text.x = element_text(
+    angle = 90))
+```
+
+mean then log of top 5
+```{r}
+top5m <- dat_mean |>
+  filter(peak_name %in% c("limonene", "ocimene", "alpha_pinene", "beta_phellandrene", "sabinene"))
+
+top5m |>  
+  ggplot(aes(x = location, y = mean_log, color = peak_name)) +
+  geom_point(position = position_jitter(width = 0.3),
+             alpha = 0.5,
+             size = 3) +
+  facet_grid(season ~ time) +
+  theme( axis.text.x = element_text(
+    angle = 90))
+```
+
+# At this point I'm drowning in figures so I asked AI to walk me through some steps to visualize things
+Boxplot by factor
+```{r}
+dat |>
+  ggplot(aes(x = location, y = conc_nglog, fill = season)) +
+  geom_boxplot() +
+  facet_wrap(~peak_name, scales = "free_y")
+```
+
+Time of Day Trends
+```{r}
+dat |>
+  filter(type == "sample", location == "como", season == "fall") |>
+  ggplot(aes(x = time, y = conc_nglog, group = season, color = season )) +
+  geom_point(position = position_jitter(width = 0.1, height = 0), alpha = 0.5) +
+  stat_summary(fun = mean, geom = "point") +
+  stat_summary(fun.data = mean_cl_normal, geom = "errorbar") +
+  stat_summary(fun = mean, geom = "line") +
+  facet_wrap(~peak_name, scales = "free_y") +
+  labs(title = "Como Fall")
+
+```
+
+```{r}
+dat |>
+  filter(type == "sample", location == "forest", season == "fall") |>
+  ggplot(aes(x = time, y = conc_nglog, group = season, color = season )) +
+  geom_point(position = position_jitter(width = 0.1, height = 0), alpha = 0.5) +
+  stat_summary(fun = mean, geom = "point") +
+  stat_summary(fun.data = mean_cl_normal, geom = "errorbar") +
+  stat_summary(fun = mean, geom = "line") +
+  facet_wrap(~peak_name, scales = "free_y") +
+  labs(title = "Forest Fall")
+
+  
+```
+
+# PCA analysis!!!
+
+Rearranging the data for PCA
+```{r}
+wide_dat <- dat |>
+  filter(type == "sample") |>
+  select(peak_name, conc_ngcm, pca_id) |>
+  drop_na() |>
+  pivot_wider(names_from = peak_name, values_from = conc_ngcm) |>
+  select(-pca_id)
+```
+
+Running the PCA
+```{r}
+z <- prcomp(~.,
+            data = wide_dat,
+            center = TRUE,
+            scale. = TRUE)
+
+```
+
+getting eigenvalues
+```{r}
+get_eig(z)
+
+```
+
+Printing the PCA
+
+```{r}
+print(z)
+```
+
+Visualize PCA
+
+PCA 1 and 2
+```{r}
+pca1 <- fviz_pca_var(z)
+
+ggsave(filename = "pca1.png", plot = pca1, width = 8, height = 7, units = "in", bg = "white")
+```
+
+PCA 1 and 2
+```{r}
+fviz_pca_var(z, axes = c(1, 2))
+```
+
+getting the PCA loadings as a tibble
+```{r}
+pcatibble <- as_tibble(
+  z$rotation,
+  rownames = "compound"
+)
+```
+
+Now filtering based on the PCA to make  some graphs that are a bit easier to look at.
+```{r}
+pca1top12 <- dat |>
+  filter(peak_name %in% c("limonene", "beta_myrcene", "alpha_pinene", "beta_phellandrene", "sabinene", "beta_pinene", "eucalyptol", "alpha_phellandrene", "alpha_terpinene", "gamma_terpinene", "longifolene", "ocimene"))
+
+pca1top12 |>
+  filter(type == "sample", location == "como", season == "fall" ) |>
+  ggplot(aes(x = time, y = conc_nglog, group = season, color = season )) +
+  geom_point(position = position_jitter(width = 0.1, height = 0), alpha = 0.5) +
+  stat_summary(fun = mean, geom = "point") +
+  stat_summary(fun.data = mean_cl_normal, geom = "errorbar") +
+  stat_summary(fun = mean, geom = "line") +
+  facet_wrap(~peak_name, scales = "free_y") +
+  labs(title = "Como Fall")
+
+
+```
+
+making two plots to look at these compounds over time and separating by location
+```{r}
+pca1forest <- pca1top12 |>
+  filter(type == "sample", location == "forest", peak_name == "limonene") |>
+  ggplot(aes(x = time, y = conc_nglog, color = peak_name)) +
+  geom_boxplot() +
+  geom_point(position = position_jitter(width = 0.3),
+             alpha = 0.5,
+             size = 3) +
+  facet_wrap(~season) +
+  theme( axis.text.x = element_text(
+    angle = 90)) +
+  labs(title = "Forest")
+pca1forest
+
+pca1city <- pca1top12 |>
+  filter(type == "sample", location == "como", peak_name == "limonene") |>
+  ggplot(aes(x = time, y = conc_nglog, color = peak_name)) +
+  geom_boxplot() +
+  geom_point(position = position_jitter(width = 0.3),
+             alpha = 0.5,
+             size = 3) +
+  facet_wrap(~season) +
+  theme( axis.text.x = element_text(
+    angle = 90)) +
+  labs(title = "CoMo")
+pca1city
+
+plot_grid(pca1forest, pca1city, nrow = 2)
+```
+
+```{r}
+blimonene <- pca1top12 |>
+  filter(type == "sample", peak_name == "limonene") |>
+  ggplot(aes(x = time, y = conc_nglog, color = location)) +
+  geom_boxplot() +
+  geom_point(position = position_jitter(width = 0.2),
+             alpha = 0.5,
+             size = 3) +
+  facet_wrap(~season) +
+  theme( axis.text.x = element_text(
+    angle = 90)) +
+  labs(title = "both limonene")
+
+blimonene
+
+```
+
+```{r}
+bbetaphell <- pca1top12 |>
+  filter(type == "sample", peak_name == "beta_phellandrene") |>
+  ggplot(aes(x = time, y = conc_nglog, color = location)) +
+  geom_boxplot() +
+  geom_point(position = position_jitter(width = 0.2),
+             alpha = 0.5,
+             size = 3) +
+  facet_wrap(~season) +
+  theme( axis.text.x = element_text(
+    angle = 90)) +
+  labs(title = "both alpha_phellandrene")
+
+bbetaphell
+```
+
+```{r}
+bmyrc <- pca1top12 |>
+  filter(type == "sample", peak_name == "beta_myrcene") |>
+  ggplot(aes(x = time, y = conc_nglog, color = location)) +
+  geom_boxplot() +
+  geom_point(position = position_jitter(width = 0.2),
+             alpha = 0.5,
+             size = 3) +
+  facet_wrap(~season) +
+  theme( axis.text.x = element_text(
+    angle = 90)) +
+  labs(title = "both beta myrcene")
+
+bmyrc
+```
+
+```{r}
+sab <- pca1top12 |>
+  filter(type == "sample", peak_name == "sabinene") |>
+  ggplot(aes(x = time, y = conc_nglog, color = location)) +
+  geom_boxplot() +
+  geom_point(position = position_jitter(width = 0.2),
+             alpha = 0.5,
+             size = 3) +
+  facet_wrap(~season) +
+  theme( axis.text.x = element_text(
+    angle = 90)) +
+  labs(title = "both sabinene")
+
+sab
+```
+
+```{r}
+ocim <- pca1top12 |>
+  filter(type == "sample", peak_name == "ocimene") |>
+  ggplot(aes(x = time, y = conc_nglog, color = location)) +
+  geom_boxplot() +
+  geom_point(position = position_jitter(width = 0.2),
+             alpha = 0.5,
+             size = 3) +
+  facet_wrap(~season) +
+  theme( axis.text.x = element_text(
+    angle = 90)) +
+  labs(title = "both ocimene")
+
+ocim
+```
+
+```{r}
+apin <- pca1top12 |>
+  filter(type == "sample", peak_name == "alpha_pinene") |>
+  ggplot(aes(x = time, y = conc_nglog, color = location)) +
+  geom_boxplot() +
+  geom_point(position = position_jitter(width = 0.3),
+             alpha = 0.5,
+             size = 3) +
+  facet_wrap(~season) +
+  theme( axis.text.x = element_text(
+    angle = 90)) +
+  labs(title = "both alpha_pinene")
+
+ocim
+```
+
+Interaction plot of 5 compounds (keep this idiot)
+```{r}
+intplotpca <- pca1top12 |>
+  filter(type == "sample", location == "forest", peak_name %in% c("alpha_pinene", "ocimene", "sabinene", "beta_phellandrene", "limonene")) |>
+  ggplot(aes(x = time, y = conc_nglog, group = peak_name, color = peak_name )) +
+   geom_point(position = position_jitter(width = 0.1), size = 3, alpha = 0.5) +
+  stat_summary(fun = mean, geom = "point", size = 3) +
+  stat_summary(fun = mean, geom = "line", linewidth = 1.5) +
+  facet_wrap(~season) +
+  labs(title = "Forest", x = NULL, y = "Concentration (ng/m^3 log10)", color = NULL)
+
+intplotpca
+
+ggsave(filename = "interactionplotforest.png", plot = intplotpca, width = 8, height = 7, units = "in", bg = "white")
+
+```
+
+```{r}
+intplotpca2 <- pca1top12 |>
+  filter(type == "sample", location == "como", peak_name %in% c("alpha_pinene", "ocimene", "sabinene", "beta_phellandrene", "limonene")) |>
+  ggplot(aes(x = time, y = conc_nglog, group = peak_name, color = peak_name )) +
+   geom_point(position = position_jitter(width = 0.1), size = 3, alpha = 0.5) +
+  stat_summary(fun = mean, geom = "point", size = 3) +
+  stat_summary(fun = mean, geom = "line", linewidth = 1.5) +
+  facet_wrap(~season) +
+  labs(title = "City", x = NULL, y = "Concentration (ng/m^3 log10)", color = NULL)
+
+intplotpca2
+
+ggsave(filename = "interactionplotcity.png", plot = intplotpca2, width = 8, height = 7, units = "in", bg = "white")
+```
+
+```{r}
+plot_grid(intplotpca, intplotpca2, nrow = 2)
+```
+
+Plotting the Compounds next to each other 
+
+```{r}
+springplot1 <- pca1top12 |>
+  filter(type == "sample", season == "spring", time == "12pm" , peak_name %in% c("alpha_pinene", "ocimene", "sabinene", "beta_phellandrene", "limonene")) |>
+  ggplot(aes(x = peak_name, y = conc_nglog, color = peak_name)) +
+  geom_boxplot() +
+  geom_point(position = position_jitter(0.3), size = 2, alpha = 0.5) +
+  facet_wrap(~location) +
+  theme(axis.text.x = element_blank()) +
+  labs(title = "12pm")
+
+springplot1
+
+springplot2 <- pca1top12 |>
+  filter(type == "sample", season == "spring", time == "8am" , peak_name %in% c("alpha_pinene", "ocimene", "sabinene", "beta_phellandrene", "limonene")) |>
+  ggplot(aes(x = peak_name, y = conc_nglog, color = peak_name)) +
+  geom_boxplot() +
+  geom_point(position = position_jitter(0.3), size = 2, alpha = 0.5) +
+  facet_wrap(~location) +
+  theme(axis.text.x = element_blank()) +
+  labs(title = "8am")
+
+springplot2
+
+springplot3 <- pca1top12 |>
+  filter(type == "sample", season == "spring", time == "6pm" , peak_name %in% c("alpha_pinene", "ocimene", "sabinene", "beta_phellandrene", "limonene")) |>
+  ggplot(aes(x = peak_name, y = conc_nglog, color = peak_name)) +
+  geom_boxplot() +
+  geom_point(position = position_jitter(0.3), size = 2, alpha = 0.5) +
+  facet_wrap(~location) +
+  theme(axis.text.x = element_blank()) +
+  labs(title = "6pm")
+
+springplot3
+
+plot_grid(springplot1, springplot2, springplot3, nrow = 2)
+  
+```
+
+Plotting the 12pms next to each other
+```{r}
+noonplot1 <- pca1top12 |>
+  filter(type == "sample", season == "spring", time == "12pm" , peak_name %in% c("alpha_pinene", "ocimene", "sabinene", "beta_phellandrene", "limonene")) |>
+  ggplot(aes(x = peak_name, y = conc_nglog, color = peak_name)) +
+  geom_boxplot() +
+  geom_point(position = position_jitter(0.3), size = 2, alpha = 0.5) +
+  facet_wrap(~location) +
+  theme(axis.text.x = element_blank()) +
+  labs(title = "Spring 12pm", x = NULL, color = NULL, y = "Concentration (ng/m^3 log10)")
+
+noonplot1
+
+noonplot2 <- pca1top12 |>
+  filter(type == "sample", season == "summer", time == "12pm" , peak_name %in% c("alpha_pinene", "ocimene", "sabinene", "beta_phellandrene", "limonene")) |>
+  ggplot(aes(x = peak_name, y = conc_nglog, color = peak_name)) +
+  geom_boxplot() +
+  geom_point(position = position_jitter(0.3), size = 2, alpha = 0.5) +
+  facet_wrap(~location) +
+  theme(axis.text.x = element_blank()) +
+  labs(title = "Summer 12pm", x = NULL, color = NULL, y = "Concentration (ng/m^3 log10)")
+
+noonplot2
+
+noonplot3 <- pca1top12 |>
+  filter(type == "sample", season == "fall", time == "12pm" , peak_name %in% c("alpha_pinene", "ocimene", "sabinene", "beta_phellandrene", "limonene")) |>
+  ggplot(aes(x = peak_name, y = conc_nglog, color = peak_name)) +
+  geom_boxplot() +
+  geom_point(position = position_jitter(0.3), size = 2, alpha = 0.5) +
+  facet_wrap(~location) +
+  theme(axis.text.x = element_blank()) +
+  labs(title = "Fall 12pm", x = NULL, color = NULL, y = "Concentration (ng/m^3 log10)")
+
+noonplot3
+
+plot_grid(noonplot1, noonplot2, noonplot3, nrow = 2)
+
+```
+
+```{r}
+fvc <- pca1top12 |>
+  filter(type == "sample", peak_name %in% c("alpha_pinene", "ocimene", "sabinene", "beta_phellandrene", "limonene")) |>
+  ggplot(aes(x = location, y = conc_nglog)) +
+  geom_point(position = position_jitter(0.2), size = 2, alpha = 0.5) +
+  stat_summary(fun = mean, geom = "point", size = 3, color = "royalblue") +
+  stat_summary(fun.data = mean_se, geom = "errorbar", color = "royalblue", width = 0.2) +
+  scale_x_discrete(labels = c("City", "Forest")) +
+  labs(y = "Concentration (ng/m^3 log10)", x = "Location" )
+
+
+fvc
+
+
+  
+```
+
+```{r}
+# ggsave(filename = "forestandcityscat.png", plot = fvc, width = 8, height = 7, units = "in", bg = "white")
+# 
+# ggsave(filename = "noonspring.png", plot = noonplot1, width = 8, height = 7, units = "in", bg = "white")
+# 
+# ggsave(filename = "noonsummer.png", plot = noonplot2, width = 8, height = 7, units = "in", bg = "white")
+# 
+# ggsave(filename = "noonfall.png", plot = noonplot3, width = 8, height = 7, units = "in", bg = "white")
+
+
+```
+
+
+Exporting a table to put into metaboanalyst
+```{r}
+metabo <- dat |>
+  filter(type == "sample") |> 
+  group_by(pump, season, location, peak_name) |>
+  summarise(daymean = mean(conc_ugcm)) |>
+  pivot_wider(names_from = peak_name, values_from = daymean)
+
+
+#write.csv(metabo, file = "metabo_dat_phyto2.csv")
+
+metabo2 <- dat |>
+  filter(type == "sample") |> 
+  group_by(time, season, location, peak_name) |>
+  summarise(daymean = mean(conc_ugcm)) |>
+  pivot_wider(names_from = peak_name, values_from = daymean)
+
+write.csv(metabo2, file = "metabo_dat_phyto_time.csv")
+
+metabo_forest <- dat |>
+  filter(type == "sample", location == "forest") |> 
+  group_by(pump, season, peak_name) |>
+  summarise(daymean = mean(conc_ugcm)) |>
+  pivot_wider(names_from = peak_name, values_from = daymean)
+  
+write.csv(metabo_forest, file = "metabo_dat_phyto_forest.csv")
+
+metabo_como <- dat |>
+  filter(type == "sample", location == "como") |> 
+  group_by(pump, season, peak_name) |>
+  summarise(daymean = mean(conc_ugcm)) |>
+  pivot_wider(names_from = peak_name, values_from = daymean)
+
+write.csv(metabo_como, file = "metabo_dat_phyto_como.csv")
+
+
+```
+
+```{r}
+#checking to make sure this is working properly.
+#it is indeed, my manually calcuated average matches the one from the metabo table
+limonene <- dat |> filter(pump == "p5", location == "forest", season == "fall", peak_name == "limonene")
+
+limonene2 <- dat |> filter(time == "12pm", location == "forest", season == "fall", peak_name == "limonene")
+```
+
+
+
+Hi, I am getting some average compound info and slapping it in a table to share with kintek
+
+```{r}
+mean_ugcm <- dat |>
+  filter(type == "sample") |>
+  group_by(location, peak_name) |>
+  summarise(mean_conc = mean(conc_ugcm), stdv = sd(conc_ugcm))
+
+kable(mean_ugcm, caption = "Microgram per Cubic Meter Mean of Each Compound")
+
+write.xlsx(as.data.frame(mean_ugcm), "micrograms_per_cubic_meter.xlsx")
+
+
+
+#freakin wizard with R now hehe
+```
+
+
+Asking the question: Which compounds should we choose to move forward into exposure testing
+Things to consider:
+- abundance of the compounds
+- prior lit on health outcomes
+- ease of access (can I purchase them easily)
+- compliments other literature
+
+
+To answer which compounds are most prevalent in the forest let's plot that
+```{r}
+#filtered by samples and forest as location. Then grouped by compound to find the average concentration of the compounds in the forest.
+
+fcomp <- dat |>
+  filter(type == "sample", location == "forest") |>
+  group_by(peak_name) |>
+  summarise(mean = mean(conc_ugcm))
+
+ccomp <- dat |>
+  filter(type == "sample", location == "como") |>
+  group_by(peak_name) |>
+  summarise(mean = mean(conc_ugcm))
+```
+
+> the compounds with the highest concentration are 
