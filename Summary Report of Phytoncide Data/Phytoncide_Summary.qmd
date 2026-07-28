@@ -1,0 +1,987 @@
+---
+title: "Phytoncide_Summary"
+date: 7/23/2026
+author: "Ruth Williamson, Slayer of Data and Scurge of the Analysis"
+format: html
+---
+
+# Read Me!
+
+> brief read me here <
+
+## **In Brief**
+
+> Put summary in words here <
+
+# **Data Import and Cleaning**    
+
+### Load in libraries :)
+```{r}
+library(tidyverse)
+library(cowplot)
+library(readxl)
+theme_set(theme_cowplot())
+library(factoextra)
+library(wesanderson)
+library(gt)
+library(openxlsx)
+library(nlme)
+library(lmtest)
+library(AICcmodavg)
+library(lattice)
+library(chemhelper) #for retention index calculations
+pal <- wes_palette(name = "Zissou1")
+```
+
+### Read in the data!
+```{r}
+phyto_dat <- read.csv("phytoncide_dat")
+
+phyto_dat$time <- factor(phyto_dat$time, labels = c("8am", "12pm", "6pm"), levels = c("800", "1200", "1800")) #changing time to factor 
+
+glimpse(phyto_dat)
+
+pump_dat <- read_xlsx("tidy_pump_counts.xlsx")
+
+pump_dat$time <- factor(pump_dat$time, labels = c("8am", "12pm", "6pm"), levels = c("800", "1200", "1800"))
+
+glimpse(pump_dat)
+```
+
+### Performing calculations on the pump data
+```{r}
+pump_dat <- pump_dat |>
+  mutate(total_count = count_after-count_before, #pump count during sampling
+         total_ml = total_count*ml_count, #ml collected
+         total_l = total_ml/1000, #total liters collected
+         cubic_m = total_ml/1000000) #total cubic meters collected
+
+glimpse(pump_dat)
+```
+
+### Slap those files together
+```{r}
+dat_joined <- left_join(phyto_dat, pump_dat, by=join_by(time, pump, year, season, location)) 
+#joined on the shared columns
+
+glimpse(dat_joined)
+```
+
+### Calculate the corrected concentrations based on the pump data
+```{r}
+dat <- dat_joined |>
+  mutate(conc_ngcm = amount/cubic_m,
+         conc_ugcm = conc_ngcm/1000,
+         pca_id = case_when(
+
+    type == "sample" ~ str_c(
+      "sample", pump, time, location, season, year,
+      sep = "_"
+    ),
+
+    type == "control" ~ str_c(
+      "control", time, location, season, year,
+      sep = "_"
+    ),
+
+    type == "blk" ~ str_c(
+      blk_num, location, season, year,
+      sep = "_"
+    ),
+    TRUE ~ NA_character_))
+```
+
+# LOD/LOQ Calculations
+
+This provides information on the accuracy of our method and the detection level of the instrument itself.
+
+```{r}
+limits <- read_xlsx("compound_summary_table_info_2024.xlsx") |>
+  mutate(lod = (3*concentration_ion)/(ion_signal/ion_noise),
+         loq = (10*concentration_ion)/(ion_signal/ion_noise),
+         lod_old = (3*concentration)/(signal/noise),
+         loq_old = (10*concentration)/(signal/noise))
+
+#the old LOD/LOQ was done in undergrad and I have gone through it again to make sure I understand it now and have adjusted it with how I would do it now since I have learned more.
+```
+
+```{r}
+#| echo: false
+#| warning: false
+#| message: false
+#| tbl-cap: "LOD/LOQ of Compounds"
+
+lodq <- limits |>
+  subset(select = c(name, lod, loq))
+
+lodq |>
+  gt() |>
+  tab_header(title = "LOD/LOQ of Compounds") |>
+  cols_label(name = "Compound",
+             lod = "LOD",
+             loq = "LOQ") |>
+  fmt_number(columns = c(lod, loq),
+             decimals = 3)|>
+  opt_row_striping()
+```
+
+# General Quality Control Checks and Data Filtering
+
+We need to use the blanks for background subtraction. So I need to find the average amount of the compounds found in the blanks, then remove all observations that are below the blank noise, since these readings would be chocked up to just background noise.
+
+For this analysis all blanks and controls were filtered out for this summary.
+
+#### finding average concentration of each compound in blanks
+
+since we don't have a corrected volume for the blanks we are just using the straight "amount" value the agilent system gave us.
+```{r}
+#average concentration of blanks
+blk_amounts <- dat |>
+  filter_out(type != "blk") |>
+  group_by(peak_name) |>
+  summarize(avg_blank = mean(amount))
+```
+
+Now we only keep the samples that have amounts greater than the blank averages
+```{r}
+dat <- dat |>
+  filter_out(type == "control") |> #also filtering out controls at this point
+  filter_out(type == "blk") |>
+  left_join(blk_amounts, by = "peak_name") |>
+  filter(amount > avg_blank)
+
+#The amount of times a compound was observed after blank filtering
+datcheck <- dat |>
+  group_by(peak_name) |>
+  summarise(n = n())
+```
+
+Q-value shows how well the m/z matched the ratios provided by the method. Thus, the compounds with a q-value of less than 70 will be filtered out. This ensures that the results we present are accurate.
+
+```{r}
+#filtering out results with a q-value of less than 70
+
+dat <- dat |>
+  filter_out(q_value < 70)
+
+#The amount of times a compound was observed after q-value filtering
+datcheck2 <- dat |>
+  group_by(peak_name) |>
+  summarise(n = n())
+```
+
+## Checking how many compounds per day we have after the filtering
+
+```{r}
+#group by season, location, and peak names, then count the rows of each compound.
+
+evenness <- dat |>
+  group_by(season, location, peak_name) |>
+  summarise(obscount = n(),
+            .groups = "drop_last")
+
+print(evenness)
+```
+
+In order for metaboanalyst to run statistical tests we need at least three observations per section we are looking at. 
+
+### If we wanted to look at the granular level of season, location, and time the compounds we would be able to look at are:
+
+```{r}
+slt <- dat |>
+  group_by(season, location, time, peak_name) |>
+  summarise(obscount = n(),
+            .groups = "drop_last") |>
+  filter_out(obscount < 3)
+```
+
+> There are 13 compounds to look at at this level of detail.
+
+### Or if we wanted to look at a slightly scaled up version we can look each day as a whole:
+```{r}
+sl <- dat |>
+  group_by(season, location, peak_name) |>
+  summarise(obscount = n(),
+            .groups = "drop_last") |>
+  filter_out(obscount < 3)
+```
+
+> There are 24 different compounds that can be looked at in this way.
+
+### Or if we wanted to look at the differences in location only:
+```{r}
+loc <- dat |>
+  group_by(location, peak_name) |>
+  summarise(obscount = n(),
+            .groups = "drop_last") |>
+  filter_out(obscount < 3)
+```
+
+> There are 30 different compounds available
+
+### Or if we wanted to look at the difference in season in one location:
+```{r}
+seasf <- dat |>
+  filter(location == "forest") |>
+  group_by(season, peak_name) |>
+  summarise(obscount = n(),
+            .groups = "drop_last") |>
+  filter_out(obscount < 3)
+```
+
+> There are 22 compounds available for the forest
+
+```{r}
+seasc <- dat |>
+  filter(location == "como") |>
+  group_by(season, peak_name) |>
+  summarise(obscount = n(),
+            .groups = "drop_last") |>
+  filter_out(obscount < 3)
+```
+
+> There are 20 compounds available for the city
+
+### Or if we wanted to look at time in one location:
+
+```{r}
+timef <- dat |>
+  filter(location == "forest") |>
+  group_by(time, peak_name) |>
+  summarise(obscount = n(),
+            .groups = "drop_last") |>
+  filter_out(obscount < 3)
+```
+
+> There are 14 compounds available for the forest
+
+```{r}
+timec <- dat |>
+  filter(location == "como") |>
+  group_by(time, peak_name) |>
+  summarise(obscount = n(),
+            .groups = "drop_last") |>
+  filter_out(obscount < 3)
+```
+
+> There are 21 compounds available for the city
+
+### Or here is grouping the compounds by time and location only:
+```{r}
+tl <- dat |>
+  group_by(time, location, peak_name) |>
+  summarise(obscount = n(),
+            .groups = "drop_last") |>
+  filter_out(obscount < 3)
+```
+
+> 22 compounds available in this way. (which also means the forest had one compound that the city did not have)
+
+Okay, enough of this, hopefully you can see a glance of what we have to work with once we start breaking this up into chunks to compare. Now it is time to move on into some brief visualization of the data using histograms and scatterplots and add a transformed data column, I will also clean up the working data file to be more manageable and get rid of unwanted columns for the analysis.
+
+# **Visualization**
+
+## Scatterplot of data (untransformed)
+
+```{r}
+dp <- dat |>
+  ggplot(aes(x = location, y = conc_ugcm, color = time)) +
+  geom_point(position = position_jitter(width = 0.3),
+             alpha = 0.5)
+
+dp
+```
+
+## Histogram of data (untransformed)
+
+```{r}
+dphis <- dat |>
+  ggplot(aes(x = conc_ugcm)) +
+  geom_histogram(bins = 30)
+
+dphis
+```
+
+## Log Transformation of data
+
+```{r}
+#saving copy of dat first
+dat_save <- dat
+
+dat <- dat |>
+  mutate(conc_nglog = log10(conc_ngcm),
+         conc_uglog = log10(conc_ugcm))
+```
+
+## Viewing scatterplot and histogram with transformed data
+
+```{r}
+dp2 <- dat |>
+  ggplot(aes(x = location, y = conc_uglog, color = time)) +
+  geom_point(position = position_jitter(width = 0.3),
+             alpha = 0.5)
+
+dp2
+```
+
+```{r}
+dphis2 <- dat |>
+  ggplot(aes(x = conc_uglog)) +
+  geom_histogram(bins = 30)
+
+dphis2
+```
+
+# ***Data Summaries***
+
+## Compound Identification Frequency (Location)
+
+While averages tell us how much of the compound was observed, detection frequency lets us see how often that compound was identified across our samples.
+
+```{r}
+#counted the number of observations from the data set. These are the observations with a q-value equal to or greater than 70
+#grouped by compound name, and counted the number of rows (e.g. samples it is in) then arranged largest to smallest.
+total_samples <- nrow(dat)
+
+det_freq <- dat |>
+  group_by(peak_name) |>
+  summarise(obs_num = n(),
+            freq = (obs_num/total_samples)*100) |>
+  arrange(desc(obs_num))
+
+```
+
+```{r}
+det_barchart_all <- det_freq |>
+  ggplot(aes(x = fct_reorder(peak_name, freq), y = freq)) + #groups and orders by frequency value
+  geom_col() +
+  theme( axis.text.x = element_text(
+    angle = 90)) +
+  labs(title = "Detection Frequency For All Samples",
+       x = "Compound Name",
+       y = "Frequency (%)")
+
+det_barchart_all
+```
+
+Detection Frequency in the Forest
+```{r}
+forest_obs <- dat |>
+  filter(location == "forest") |>
+  nrow()
+
+det_freq_f <- dat |>
+  filter(location == "forest") |>
+  group_by(peak_name) |>
+  summarise(obs_num = n(),
+            freq = (obs_num/forest_obs)*100) |>
+  arrange(desc(obs_num))
+
+```
+
+```{r}
+det_barchart_f <- det_freq_f |>
+  ggplot(aes(x = fct_reorder(peak_name, freq), y = freq)) + #groups and orders by frequency value
+  geom_col() +
+  theme( axis.text.x = element_text(
+    angle = 90)) +
+  labs(title = "Detection Frequency for the Forest",
+       x = "Compound Name",
+       y = "Frequency (%)")
+
+det_barchart_f
+```
+
+Detection Frequency in the City
+```{r}
+city_obs <- dat |>
+  filter(location == "como") |>
+  nrow()
+
+det_freq_c <- dat |>
+  filter(location == "como") |>
+  group_by(peak_name) |>
+  summarise(obs_num = n(),
+            freq = (obs_num/city_obs)*100) |>
+  arrange(desc(obs_num))
+
+```
+
+```{r}
+det_barchart_c <- det_freq_c |>
+  ggplot(aes(x = fct_reorder(peak_name, freq), y = freq)) + #groups and orders by frequency value
+  geom_col() +
+  theme( axis.text.x = element_text(
+    angle = 90)) +
+  labs(title = "Detection Frequency for the City",
+       x = "Compound Name",
+       y = "Frequency (%)")
+
+det_barchart_c
+```
+
+> The forest has 31 unique compounds identified while the city has only 29. My question is: what two compounds does the forest have that the city does not? These may be promising candidates for future research as being unique to the forest exposure experience.
+
+### Finding the unique compounds
+
+What rows are in forest but not in city?
+```{r}
+unique_f <- anti_join(det_freq_f, det_freq_c, join_by(peak_name))
+
+print(unique_f)
+```
+
+What rows are in the city but not in the forest?
+```{r}
+unique_c <- anti_join(det_freq_c, det_freq_f, join_by(peak_name))
+
+#no unique compounds in the city
+```
+
+> The forest has alpha-humulene and one-four-cineole which are absent in the city. These compounds have a low detection frequency but they may still provide important benefits.
+
+## Bar Chart Comparing Detection Frequencies Between the Two Locations
+
+First must combine the two detection frequency tibbles by joining on peak_name
+
+(used AI to help write the pivot long code, showed it a glimpse of the det_freq_fc and based code from it's reply, did not copy and paste.)
+```{r}
+det_freq_fc_long <- left_join(det_freq_f, det_freq_c, join_by(peak_name)) |>
+  mutate(freq_f = freq.x,
+         freq_c = freq.y) |>
+  select(peak_name, freq_f, freq_c) |>
+  pivot_longer(cols = c(freq_f, freq_c),
+               names_to = "location",
+               values_to = "det_freq") |>
+  mutate(location = recode(location, freq_f = "forest", freq_c = "city"))
+
+det_freq_fc_long[is.na(det_freq_fc_long)] <- 0 #changing NA to zero so it is plotted
+```
+
+```{r}
+det_barchart_fc <- det_freq_fc_long |>
+  ggplot(aes(x =  fct_reorder(peak_name, det_freq), y = det_freq, fill = location)) +
+  geom_bar(stat = "identity", position = "dodge", width = 0.7) +
+  theme( axis.text.x = element_text(
+    angle = 90)) +
+  labs(title = "Detection Frequency Comparison",
+       x = "Compound Name",
+       y = "Frequency (%)")
+
+det_barchart_fc
+```
+
+> Now we can see here a visual overview of which compounds had higher detection in the forest or city. For our most observed compounds the forest had a slightly higher detection rate and for less detected compounds the city had more detection. But exactly which compounds had higher detection in the city?
+
+```{r}
+det_freq_dif <- left_join(det_freq_f, det_freq_c, join_by(peak_name))
+
+det_freq_dif[is.na(det_freq_dif)] <- 0 # changing NA to zero
+
+det_freq_dif <- det_freq_dif |>
+  mutate(freq_f = freq.x,
+         freq_c = freq.y,
+         diff = freq.x - freq.y) |>
+  filter(diff > 0)
+```
+
+Table showing which compounds had higher detection in forest
+```{r}
+#| echo: false
+#| warning: false
+#| message: false
+#| tbl-cap: "Daily Average of Compounds"
+
+det_freq_dif |>
+  select(peak_name, diff) |>
+  arrange(desc(diff)) |>
+  gt() |>
+  tab_header(
+    title = "Compounds with Higher Detection in Forest")|>
+  cols_label(peak_name = "Compound",
+             diff = "% detection increase in forest") |>
+  fmt_number(columns = c(diff),
+             decimals = 3)|>
+  opt_row_striping()
+```
+
+> 15 compounds had higher detection than in the city with two of them being completely unique to the forest (alpha humulene and 1,4-cineole). Menthol had the highest jump in detection with a 3 percent increase.
+
+Now which compounds have higher detection in the city
+
+```{r}
+det_freq_dif_c <- left_join(det_freq_f, det_freq_c, join_by(peak_name))
+
+det_freq_dif_c[is.na(det_freq_dif_c)] <- 0 # changing NA to zero
+
+det_freq_dif_c <- det_freq_dif_c |>
+  mutate(freq_f = freq.x,
+         freq_c = freq.y,
+         diff = freq.y - freq.x) |>
+  filter(diff > 0)
+```
+
+Table showing which compounds had higher detection in city
+```{r}
+#| echo: false
+#| warning: false
+#| message: false
+#| tbl-cap: "Daily Average of Compounds"
+
+det_freq_dif_c |>
+  select(peak_name, diff) |>
+  arrange(desc(diff)) |>
+  gt() |>
+  tab_header(
+    title = "Compounds with Higher Detection in City")|>
+  cols_label(peak_name = "Compound",
+             diff = "% detection increase in city") |>
+  fmt_number(columns = c(diff),
+             decimals = 3)|>
+  opt_row_striping()
+```
+
+> 16 compounds had higher detection than in the forest but the margin of this not much for any given compound, near 1% difference. There were no unique compounds in the city among out list of targets.
+
+## Compound Identification Frequency (Location and Season)
+
+This is grouping by location and season and then counting up frequency to see if certain compounds are more prevelent in certain seasons.
+
+```{r}
+#grouping by season and compound now
+
+det_freq_fs <- dat |>
+  filter(location == "forest") |>
+  group_by(peak_name, season) |>
+  summarise(obs_num = n(),
+            freq = (obs_num/forest_obs)*100,
+            .groups = "drop_last") |>
+  arrange(desc(obs_num))
+
+det_freq_cs <- dat |>
+  filter(location == "como") |>
+  group_by(peak_name, season) |>
+  summarise(obs_num = n(),
+            freq = (obs_num/city_obs)*100,
+            .groups = "drop_last") |>
+  arrange(desc(obs_num))
+```
+
+```{r}
+det_freq_fcs_long <- left_join(det_freq_fs, det_freq_cs, join_by(peak_name, season)) |>
+  mutate(freq_f = freq.x,
+         freq_c = freq.y) |>
+  select(peak_name, season, freq_f, freq_c) |>
+  pivot_longer(cols = c(freq_f, freq_c),
+               names_to = "location",
+               values_to = "det_freq") |>
+  mutate(location = recode(location, freq_f = "forest", freq_c = "city"))
+
+det_freq_fcs_long[is.na(det_freq_fcs_long)] <- 0
+```
+
+```{r}
+det_barchart_fcs <- det_freq_fcs_long |>
+  ggplot(aes(x =  fct_reorder(peak_name, det_freq), y = det_freq, fill = location)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  facet_wrap(~season) +
+  theme( axis.text.x = element_text(
+    angle = 90)) +
+  labs(title = "Detection Frequency Comparison by Season",
+       x = "Compound Name",
+       y = "Frequency (%)")
+
+det_barchart_fcs
+```
+
+
+## Compound Identification Frequency (Location and Time)
+
+```{r}
+det_freq_ft <- dat |>
+  filter(location == "forest") |>
+  group_by(peak_name, time) |>
+  summarise(obs_num = n(),
+            freq = (obs_num/forest_obs)*100,
+            .groups = "drop_last") |>
+  arrange(desc(obs_num))
+
+det_freq_ct <- dat |>
+  filter(location == "como") |>
+  group_by(peak_name, time) |>
+  summarise(obs_num = n(),
+            freq = (obs_num/city_obs)*100,
+            .groups = "drop_last") |>
+  arrange(desc(obs_num))
+```
+
+```{r}
+det_freq_fct_long <- left_join(det_freq_ft, det_freq_ct, join_by(peak_name, time)) |>
+  mutate(freq_f = freq.x,
+         freq_c = freq.y) |>
+  select(peak_name, time, freq_f, freq_c) |>
+  pivot_longer(cols = c(freq_f, freq_c),
+               names_to = "location",
+               values_to = "det_freq") |>
+  mutate(location = recode(location, freq_f = "forest", freq_c = "city"))
+
+det_freq_fct_long[is.na(det_freq_fct_long)] <- 0
+```
+
+```{r}
+det_barchart_fct <- det_freq_fct_long |>
+  ggplot(aes(x =  fct_reorder(peak_name, det_freq), y = det_freq, fill = location)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  facet_wrap(~time) +
+  theme( axis.text.x = element_text(
+    angle = 90)) +
+  labs(title = "Detection Frequency Comparison by Time",
+       x = "Compound Name",
+       y = "Frequency (%)")
+
+det_barchart_fct
+```
+
+By using the detection frequencies as a guide point we can see if this relates to the observed concentrations we will work with next. We ask the question, just because a compound is detected more frequently will it contribute a larger amount to the overall total?
+
+# ***Concentration Summaries***
+
+Going from large to big, I will present the Boxplot of each compound:
++ per location
++ per location and season
++ per location and time
++ per location, season, and time
+
+## Concentration by location
+
+Need to have at least three observations of that compound per location for statistical analysis.
+```{r}
+loc_mean <- dat |>
+  group_by(location, peak_name) |>
+  summarise(n = n(),
+            mean_ugcm = mean(conc_ugcm),
+            median_ugcm = median(conc_ugcm),
+            stdv_ugcm = sd(conc_ugcm),
+            .groups = "drop_last") |>
+  filter_out(n < 3) |>
+  arrange(desc(mean_ugcm))
+```
+
+```{r}
+#| echo: false
+#| warning: false
+#| message: false
+#| tbl-cap: "Location Average of Compounds"
+
+loc_mean |>
+  gt() |>
+  tab_header(
+    title = "Location Average of Compounds",
+    subtitle = "in micrograms per meter cubed (ug/m³)")|>
+  cols_label(peak_name = "Compound",
+             n = "n",
+             mean_ugcm = "Mean (µg/m³)",
+             stdv_ugcm = "SD (µg/m³)",
+             median_ugcm = "Median (µg/m³)") |>
+  fmt_number(columns = c(mean_ugcm, stdv_ugcm, median_ugcm),
+             decimals = 3)|>
+  opt_row_striping()
+```
+
+### Untransformed Boxplot of Location Concentrations
+```{r}
+loc_boxplot <- dat |>
+  group_by(location) |>
+  ggplot(aes(x = peak_name, y = conc_ugcm, color = location)) +
+  geom_boxplot() +
+  geom_point(position = position_jitter(width = 0.2),
+             alpha = 0.5,
+             size = 2) +
+  theme(axis.text.x = element_text(angle = 90)) +
+  labs(title = "Location Averages",
+       x = "Compound Name",
+       y = "Concentration (µg/m³)")
+
+loc_boxplot
+```
+
+### Log Transformed Boxplot of Location Concentrations
+```{r}
+loc_boxplot_log <- dat |>
+  group_by(location) |>
+  ggplot(aes(x = peak_name, y = conc_uglog, color = location)) +
+  geom_boxplot() +
+  geom_point(position = position_jitter(width = 0.2),
+             alpha = 0.5,
+             size = 2) +
+  theme(axis.text.x = element_text(angle = 90)) +
+  labs(title = "Location Averages Log Data",
+       x = "Compound Name",
+       y = "Concentration (µg/m³)")
+
+loc_boxplot_log
+```
+
+## Mean concentration by Location and Season
+
+Need to have at least three observations of that compound per location and season for statistical analysis.
+```{r}
+locseas_mean <- dat |>
+  group_by(location, season, peak_name) |>
+  summarise(n = n(),
+            mean_ugcm = mean(conc_ugcm),
+            median_ugcm = median(conc_ugcm),
+            stdv_ugcm = sd(conc_ugcm),
+            .groups = "drop_last") |>
+  filter_out(n < 3) |>
+  arrange(desc(mean_ugcm))
+```
+
+```{r}
+#| echo: false
+#| warning: false
+#| message: false
+#| tbl-cap: "Location and Season Average of Compounds"
+
+locseas_mean |>
+  gt() |>
+  tab_header(
+    title = "Location and Season Average of Compounds",
+    subtitle = "in micrograms per meter cubed (ug/m³)")|>
+  cols_label(peak_name = "Compound",
+             n = "n",
+             mean_ugcm = "Mean (µg/m³)",
+             stdv_ugcm = "SD (µg/m³)",
+             median_ugcm = "Median (µg/m³)") |>
+  fmt_number(columns = c(mean_ugcm, stdv_ugcm, median_ugcm),
+             decimals = 3)|>
+  opt_row_striping()
+```
+
+### Untransformed Boxplot of Location Season Concentrations
+```{r}
+locseas_boxplot <- dat |>
+  group_by(location, season, peak_name) |>
+  filter(n() >= 3) |>
+  mutate (n = n()) |>
+  ggplot(aes(x = peak_name, y = conc_ugcm, color = location)) +
+  geom_boxplot() +
+  facet_wrap(~season) +
+  geom_point(position = position_jitter(width = 0.2),
+             alpha = 0.5,
+             size = 2) +
+  theme(axis.text.x = element_text(angle = 90)) +
+  labs(title = "Location and Season Averages",
+       x = "Compound Name",
+       y = "Concentration (µg/m³)")
+
+locseas_boxplot
+```
+
+### Log Transformed Boxplot of Location and Season Concentrations
+```{r}
+locseas_boxplot_log <- dat |>
+  group_by(location, season, peak_name) |>
+  filter(n() >= 3) |>
+  mutate (n = n()) |>
+  ggplot(aes(x = peak_name, y = conc_uglog, color = location)) +
+  geom_boxplot() +
+  facet_wrap(~season) +
+  geom_point(position = position_jitter(width = 0.2),
+             alpha = 0.5,
+             size = 2) +
+  theme(axis.text.x = element_text(angle = 90)) +
+  labs(title = "Location and Season Averages Log Data",
+       x = "Compound Name",
+       y = "Concentration (µg/m³)")
+
+locseas_boxplot_log
+```
+
+## Mean Concentration by Location and Time
+Need to have at least three observations of that compound per location and season for statistical analysis.
+```{r}
+loctim_mean <- dat |>
+  group_by(location, time, peak_name) |>
+  summarise(n = n(),
+            mean_ugcm = mean(conc_ugcm),
+            median_ugcm = median(conc_ugcm),
+            stdv_ugcm = sd(conc_ugcm),
+            .groups = "drop_last") |>
+  filter_out(n < 3) |>
+  arrange(desc(mean_ugcm))
+```
+
+```{r}
+#| echo: false
+#| warning: false
+#| message: false
+#| tbl-cap: "Location and Time Average of Compounds"
+
+loctim_mean |>
+  gt() |>
+  tab_header(
+    title = "Location and Time Average of Compounds",
+    subtitle = "in micrograms per meter cubed (ug/m³)")|>
+  cols_label(peak_name = "Compound",
+             n = "n",
+             mean_ugcm = "Mean (µg/m³)",
+             stdv_ugcm = "SD (µg/m³)",
+             median_ugcm = "Median (µg/m³)") |>
+  fmt_number(columns = c(mean_ugcm, stdv_ugcm, median_ugcm),
+             decimals = 3)|>
+  opt_row_striping()
+```
+
+### Untransformed Boxplot of Location Season Concentrations
+```{r}
+loctim_boxplot <- dat |>
+  group_by(location, time, peak_name) |>
+  filter(n() >= 3) |>
+  mutate (n = n()) |>
+  ggplot(aes(x = peak_name, y = conc_ugcm, color = location)) +
+  geom_boxplot() +
+  facet_wrap(~time) +
+  geom_point(position = position_jitter(width = 0.2),
+             alpha = 0.5,
+             size = 2) +
+  theme(axis.text.x = element_text(angle = 90)) +
+  labs(title = "Location and Time Averages",
+       x = "Compound Name",
+       y = "Concentration (µg/m³)")
+
+loctim_boxplot
+```
+
+### Log Transformed Boxplot of Location and Season Concentrations
+```{r}
+loctim_boxplot_log <- dat |>
+  group_by(location, time, peak_name) |>
+  filter(n() >= 3) |>
+  mutate (n = n()) |>
+  ggplot(aes(x = peak_name, y = conc_uglog, color = location)) +
+  geom_boxplot() +
+  facet_wrap(~time) +
+  geom_point(position = position_jitter(width = 0.2),
+             alpha = 0.5,
+             size = 2) +
+  theme(axis.text.x = element_text(angle = 90)) +
+  labs(title = "Location and Time Averages Log Data",
+       x = "Compound Name",
+       y = "Concentration (µg/m³)")
+
+loctim_boxplot_log
+```
+
+## Mean Concentration by Location and Time
+Need to have at least three observations of that compound per location and season for statistical analysis.
+```{r}
+loctimseas_mean <- dat |>
+  group_by(location, season, time, peak_name) |> #13 compounds which checks out with our prior frequency checks
+  summarise(n = n(),
+            mean_ugcm = mean(conc_ugcm),
+            median_ugcm = median(conc_ugcm),
+            stdv_ugcm = sd(conc_ugcm),
+            .groups = "drop_last") |>
+  filter_out(n < 3) |>
+  arrange(desc(mean_ugcm))
+```
+
+```{r}
+#| echo: false
+#| warning: false
+#| message: false
+#| tbl-cap: "Location, Season, Time Average of Compounds"
+
+loctimseas_mean |>
+  gt() |>
+  tab_header(
+    title = "Location and Time Average of Compounds",
+    subtitle = "in micrograms per meter cubed (ug/m³)")|>
+  cols_label(peak_name = "Compound",
+             n = "n",
+             mean_ugcm = "Mean (µg/m³)",
+             stdv_ugcm = "SD (µg/m³)",
+             median_ugcm = "Median (µg/m³)") |>
+  fmt_number(columns = c(mean_ugcm, stdv_ugcm, median_ugcm),
+             decimals = 3)|>
+  opt_row_striping()
+```
+
+### Untransformed Boxplot of Location Season Concentrations
+```{r}
+loctimseas_boxplot <- dat |>
+  group_by(location, season, time, peak_name) |>
+  filter(n() >= 3) |>
+  mutate (n = n()) |>
+  ggplot(aes(x = peak_name, y = conc_ugcm, color = location)) +
+  geom_boxplot() +
+  facet_grid(time ~ season, scale = "free") +
+  geom_point(position = position_jitter(width = 0.2),
+             alpha = 0.5,
+             size = 2) +
+  theme(axis.text.x = element_text(angle = 90)) +
+  labs(title = "Location, Season, and Time Averages",
+       x = "Compound Name",
+       y = "Concentration (µg/m³)")
+
+loctimseas_boxplot
+```
+
+### Log Transformed Boxplot of Location and Season Concentrations
+```{r}
+loctimseas_boxplot_log <- dat |>
+  group_by(location, season, time, peak_name) |>
+  filter(n() >= 3) |>
+  mutate (n = n()) |>
+  ggplot(aes(x = peak_name, y = conc_uglog, color = location)) +
+  geom_boxplot() +
+  facet_grid(time ~ season) +
+  geom_point(position = position_jitter(width = 0.2),
+             alpha = 0.5,
+             size = 2) +
+  theme(axis.text.x = element_text(angle = 90)) +
+  labs(title = "Location Season, and Time Averages Log Data",
+       x = "Compound Name",
+       y = "Concentration (µg/m³)")
+
+loctimseas_boxplot_log
+```
+
+Okay so that was indeed quite a lot of charts and such. However, I felt it important to at least generally visualize everything that is going on prior to doing any statistical analysis so I am confident in what it spits out is true.
+
+# ***Statistical Tests***
+
+Okay this is where things get spooky.
+
+The questions we are trying to ask are:
+- Does location, time, or season make a difference on what compounds are there/there amounts?
+- Which compounds are more prevalent and where/when are they most likely to be found?
+- 
+
+### Testing which linear model is better using AAIC
+
+using just alpha phellandrene as a test molecule we will try different models to see which fits the data best and go forward with the rest using that.
+```{r}
+aphel <- dat |>
+  filter(peak_name == "alpha_phellandrene")
+  
+
+lm1 <- lm(conc_ugcm ~ location * season * time, data = aphel) # untransformed concentrations
+
+lm2 <- lm(conc_uglog ~ location * season * time, data = aphel) #log transformed
+
+#lm3 <- lme(conc_ugcm ~ season * time, random = ~1|location, data = aphel) # this doesn't work -_-
+
+lm4 <- lm(conc_uglog ~ location + season * time, data = aphel)
+
+lm5 <- lm(conc_uglog ~ location * season + time, data = aphel)
+
+lm6 <- lm(conc_uglog ~ location + season + time, data = aphel)
+
+summary(lm6)
+
+plot(lm2)
+
+```
+
