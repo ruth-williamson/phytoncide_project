@@ -190,6 +190,7 @@ ggplot(aes(x=concentration, y= response)
        x = "Concentration (ppm)",
        y = "Peak Area")
   
+ggsave("camphene_cal_curve.png", path = "")
 ```
 
 ```{r}
