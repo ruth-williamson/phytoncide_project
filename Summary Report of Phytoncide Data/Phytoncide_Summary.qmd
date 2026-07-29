@@ -1,8 +1,13 @@
 ---
 title: "Phytoncide_Summary"
-date: 7/23/2026
+date: 'Last updated: `r Sys.Date()`'
 author: "Ruth Williamson, Slayer of Data and Scurge of the Analysis"
-format: html
+format: 
+  html:
+    toc: true
+    toc_depth: 3
+    toc_float: true
+    embed-resources: true
 ---
 
 # Read Me!
@@ -30,6 +35,8 @@ library(lmtest)
 library(AICcmodavg)
 library(lattice)
 library(chemhelper) #for retention index calculations
+library(janitor)
+library(snakecase)
 pal <- wes_palette(name = "Zissou1")
 ```
 
@@ -96,7 +103,7 @@ dat <- dat_joined |>
 This provides information on the accuracy of our method and the detection level of the instrument itself.
 
 ```{r}
-limits <- read_xlsx("compound_summary_table_info_2024.xlsx") |>
+compound_info <- read_xlsx("compound_summary_table_info_2024.xlsx") |>
   mutate(lod = (3*concentration_ion)/(ion_signal/ion_noise),
          loq = (10*concentration_ion)/(ion_signal/ion_noise),
          lod_old = (3*concentration)/(signal/noise),
@@ -111,7 +118,7 @@ limits <- read_xlsx("compound_summary_table_info_2024.xlsx") |>
 #| message: false
 #| tbl-cap: "LOD/LOQ of Compounds"
 
-lodq <- limits |>
+lodq <- compound_info |>
   subset(select = c(name, lod, loq))
 
 lodq |>
@@ -124,6 +131,39 @@ lodq |>
              decimals = 3)|>
   opt_row_striping()
 ```
+
+# Retention Index Calculations
+
+Retention indexes are calcuated by using the retention time of alkanes that proceed directly before and after the compound.The equation is as follows
+
+> Ix = 100n + 100(tx-tn) / (tn+1 − tn)
+
+The package I would like to use for this is: chemhelper by Eric R. Scott
+
+To cite package ‘chemhelper’ in publications use:
+
+Scott E (2023). chemhelper: Helper Functions For Dealing With GCMS and LCMS data from IonAnalytics. R package version 0.0.0.9000, https://github.com/aariq/chemhelper.
+
+
+Getting just the retention times and compound names from the compound info table. These retention times are what the method used to find the compounds:
+```{r}
+xrt <- compound_info |>
+  subset(select = c(name, rt)) |>
+  mutate(name = to_snake_case(name)) #converting names to snakecase
+
+nrt <- read_xlsx("Alkane_RT.xlsx") # reading in alkane rt info
+```
+
+Testing one retention index and comparing it to hand calculation
+```{r}
+calc_RI(14.467, nrt$rt, nrt$carbon_num)
+
+#my hand calculation resulted in 1416.825387
+```
+
+Okay, so it appears to be working, now I need to create a loop to go through my compounds and calculate each RI and put that in a new dataframe.
+
+
 
 # General Quality Control Checks and Data Filtering
 
@@ -279,7 +319,7 @@ tl <- dat |>
 
 Okay, enough of this, hopefully you can see a glance of what we have to work with once we start breaking this up into chunks to compare. Now it is time to move on into some brief visualization of the data using histograms and scatterplots and add a transformed data column, I will also clean up the working data file to be more manageable and get rid of unwanted columns for the analysis.
 
-# **Visualization**
+# Visualization
 
 ## Scatterplot of data (untransformed)
 
@@ -332,7 +372,7 @@ dphis2 <- dat |>
 dphis2
 ```
 
-# ***Data Summaries***
+# Data Summaries
 
 ## Compound Identification Frequency (Location)
 
@@ -644,7 +684,7 @@ det_barchart_fct
 
 By using the detection frequencies as a guide point we can see if this relates to the observed concentrations we will work with next. We ask the question, just because a compound is detected more frequently will it contribute a larger amount to the overall total?
 
-# ***Concentration Summaries***
+# Concentration Summaries
 
 Going from large to big, I will present the Boxplot of each compound:
 + per location
@@ -955,11 +995,11 @@ Okay so that was indeed quite a lot of charts and such. However, I felt it impor
 Okay this is where things get spooky.
 
 The questions we are trying to ask are:
-- Does location, time, or season make a difference on what compounds are there/there amounts?
-- Which compounds are more prevalent and where/when are they most likely to be found?
-- 
++ Does location, time, or season make a difference on what compounds are there/there amounts?
++ Which compounds are more prevalent and where/when are they most likely to be found?
++ What is unique about the two locations, does the forest have something the city doesn't 
 
-### Testing which linear model is better using AAIC
+### Testing which linear model is better using AIC
 
 using just alpha phellandrene as a test molecule we will try different models to see which fits the data best and go forward with the rest using that.
 ```{r}
