@@ -98,6 +98,23 @@ dat <- dat_joined |>
     TRUE ~ NA_character_))
 ```
 
+# How many zero readings?
+
+```{r}
+zero_count <- dat |>
+  filter(type != "control") |>
+  filter(type != "blk") |>
+  group_by(pca_id) |>
+  summarise(zero_val_count = sum(conc_ugcm == 0),
+            value_count = sum(conc_ugcm != 0),
+            obs = n()) |>
+  print()
+
+write.xlsx(zero_count, "Missouri_null_counts.xlsx")
+```
+
+
+
 # LOD/LOQ Calculations
 
 This provides information on the accuracy of our method and the detection level of the instrument itself.

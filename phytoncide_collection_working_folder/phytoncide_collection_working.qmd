@@ -1,4 +1,4 @@
----
+0---
 title: "phytoncide_collection_working"
 format: html
 ---
@@ -784,7 +784,7 @@ metabo2 <- dat |>
   summarise(daymean = mean(conc_ugcm)) |>
   pivot_wider(names_from = peak_name, values_from = daymean)
 
-write.csv(metabo2, file = "metabo_dat_phyto_time.csv")
+#write.csv(metabo2, file = "metabo_dat_phyto_time.csv")
 
 metabo_forest <- dat |>
   filter(type == "sample", location == "forest") |> 
@@ -792,7 +792,7 @@ metabo_forest <- dat |>
   summarise(daymean = mean(conc_ugcm)) |>
   pivot_wider(names_from = peak_name, values_from = daymean)
   
-write.csv(metabo_forest, file = "metabo_dat_phyto_forest.csv")
+#write.csv(metabo_forest, file = "metabo_dat_phyto_forest.csv")
 
 metabo_como <- dat |>
   filter(type == "sample", location == "como") |> 
@@ -800,9 +800,23 @@ metabo_como <- dat |>
   summarise(daymean = mean(conc_ugcm)) |>
   pivot_wider(names_from = peak_name, values_from = daymean)
 
-write.csv(metabo_como, file = "metabo_dat_phyto_como.csv")
+#write.csv(metabo_como, file = "metabo_dat_phyto_como.csv")
 
+metabo_seasons <- dat |>
+  filter(type == "sample") |> 
+  group_by(time, season, location, peak_name) |>
+  summarise(daymean = mean(conc_ugcm)) |>
+  pivot_wider(names_from = peak_name, values_from = daymean)
 
+#write.csv(metabo_seasons, file = "metabo_dat_phyto_seasons.csv")
+
+metabo_location <- dat |>
+  filter(type == "sample") |> 
+  group_by(time, season, location, peak_name) |>
+  summarise(daymean = mean(conc_ugcm)) |>
+  pivot_wider(names_from = peak_name, values_from = daymean)
+
+#write.csv(metabo_location, file = "metabo_dat_phyto_location.csv")
 ```
 
 ```{r}
